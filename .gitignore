@@ -1,0 +1,29 @@
+# --- docs / research: never pushed
+*.html
+*.md
+*.txt
+*.pdf
+docs/
+doc/
+research/
+
+# --- secrets: never pushed
+.env
+.env.*
+*.key
+*.pem
+*_key*
+*secret*
+*token*
+*credential*
+config.local.*
+settings.local.*
+*.local.json
+
+# --- runtime / tooling
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
