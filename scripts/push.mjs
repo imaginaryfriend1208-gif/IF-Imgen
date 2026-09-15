@@ -28,7 +28,8 @@ const staged = out('git', ['diff', '--cached', '--name-only']).split(/\r?\n/).fi
 const bad = staged.filter(f => /\.html?$|\.md$|\.env|key|secret|token|credential/i.test(f));
 if (bad.length) { run('git', ['reset', '-q']); fail(`Refusing: doc or secret-like file is staged: ${bad.join(', ')}`); }
 
-const msg = process.argv.slice(2).join(' ').trim() || 'update';
+// cmd.exe may hand the quotes through verbatim -> strip one surrounding pair.
+const msg = process.argv.slice(2).join(' ').trim().replace(/^"(.*)"$/s, '$1').trim() || 'update';
 if (!staged.length) console.log('Nothing to commit.');
 else run('git', ['commit', '-m', msg]);
 run('git', ['push', '-u', 'origin', 'main']);
