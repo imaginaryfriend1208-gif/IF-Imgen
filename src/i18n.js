@@ -67,6 +67,9 @@ const en = {
     lbl_profile: 'Profile', st_no_profiles: '-- no connection profiles --', lbl_base_url: 'Base URL', lbl_api_key: 'API key', lbl_model: 'Model', lbl_max_tokens: 'Max tokens',
     btn_test_llm: 'Test LLM',
 
+    // ---- job strip (Generate tab)
+    job_idle: 'No image job running', job_running: '{n} image job(s) running', job_cancel: 'Cancel all image jobs',
+
     // ---- generate
     box_behaviour: 'Behaviour', lbl_enabled: 'Extension enabled', lbl_auto: 'Auto-generate on every character reply',
     lbl_show_button: 'Show per-message button', lbl_collapse: 'Collapse images in chat behind a small button',
@@ -79,9 +82,10 @@ const en = {
     opt_mode_refine: '2 calls: planner + refine (second LLM rewrites cast details + scene into one prompt; good for natural-language models)',
     lbl_refine_system: 'Refine system prompt', btn_reset_default: 'Reset to default',
     note_refine: 'Placeholder: {{dialect_rule}}. Quality prefix, style fragment and LoRAs are still added by the compiler; the refine step only merges characters/personas with the scene.',
-    box_preset: 'Planner preset', btn_save_preset: 'Save preset', btn_save_as: 'Save as new…', btn_delete_preset: 'Delete preset', btn_export_presets: 'Export presets', btn_import_presets: 'Import presets',
-    note_preset: 'Edit the prompt freely. A <b>*</b> after the preset name means unsaved changes — press <b>Save preset</b> to keep them. Saving an edited built-in (★) preset creates your own copy. Placeholders: {{count}}, {{dialect_rule}}.',
-    st_preset_saved: 'Preset saved.', st_preset_copy: '{name} (edited)', ph_preset_name: 'Preset name:',
+    box_preset: 'Planner preset', btn_save_preset: 'Save (overwrite this preset)', btn_save_as: 'Save as new preset…', btn_delete_preset: 'Delete preset', btn_export_presets: 'Export presets', btn_import_presets: 'Import presets',
+    btn_preset_reset: 'Reset this built-in preset to its default text',
+    note_preset: 'Edit the prompt freely. A <b>*</b> after the preset name means unsaved changes. <b>Save</b> overwrites the selected preset (built-ins ★ keep your text as an override, marked <i>edited</i>, with a reset button); <b>Save as new</b> creates a separate preset. Placeholders: {{count}}, {{dialect_rule}}.',
+    st_preset_saved: 'Preset saved.', st_preset_reset: 'Built-in preset restored.', preset_overridden: 'edited', ph_preset_name: 'Preset name:',
     box_frame: 'Prompt frame', lbl_quality: 'Quality prefix',
     note_negative: 'Untick Negative for models that ignore it (e.g. Krea); entity negatives are skipped as well.',
     h_overrides: 'Overrides (0 = use model profile)',
@@ -179,6 +183,9 @@ const vi = {
     lbl_profile: 'Profile', st_no_profiles: '-- chưa có connection profile --', lbl_base_url: 'Base URL', lbl_api_key: 'API key', lbl_model: 'Model', lbl_max_tokens: 'Max tokens',
     btn_test_llm: 'Kiểm tra LLM',
 
+    // ---- job strip (Generate tab)
+    job_idle: 'Không có lệnh tạo ảnh nào đang chạy', job_running: 'Đang chạy {n} lệnh tạo ảnh', job_cancel: 'Hủy mọi lệnh tạo ảnh',
+
     // ---- generate
     box_behaviour: 'Hành vi', lbl_enabled: 'Bật extension', lbl_auto: 'Tự tạo ảnh sau mỗi câu trả lời của nhân vật',
     lbl_show_button: 'Hiện nút trên từng tin nhắn', lbl_collapse: 'Thu gọn ảnh trong chat vào một nút nhỏ',
@@ -191,9 +198,10 @@ const vi = {
     opt_mode_refine: '2 lần: planner + refine (LLM thứ hai viết lại chi tiết nhân vật + cảnh thành một prompt; hợp model ngôn ngữ tự nhiên)',
     lbl_refine_system: 'System prompt refine', btn_reset_default: 'Khôi phục mặc định',
     note_refine: 'Placeholder: {{dialect_rule}}. Quality prefix, style và LoRA vẫn do compiler thêm; bước refine chỉ hòa trộn nhân vật/persona với cảnh.',
-    box_preset: 'Preset planner', btn_save_preset: 'Lưu preset', btn_save_as: 'Lưu thành preset mới…', btn_delete_preset: 'Xóa preset', btn_export_presets: 'Xuất preset', btn_import_presets: 'Nhập preset',
-    note_preset: 'Sửa prompt thoải mái. Dấu <b>*</b> sau tên preset = có chỉnh sửa chưa lưu — bấm <b>Lưu preset</b> để giữ lại. Lưu một preset có sẵn (★) đã sửa sẽ tạo bản riêng của bạn. Placeholder: {{count}}, {{dialect_rule}}.',
-    st_preset_saved: 'Đã lưu preset.', st_preset_copy: '{name} (đã sửa)', ph_preset_name: 'Tên preset:',
+    box_preset: 'Preset planner', btn_save_preset: 'Lưu đè preset này', btn_save_as: 'Lưu thành preset mới…', btn_delete_preset: 'Xóa preset', btn_export_presets: 'Xuất preset', btn_import_presets: 'Nhập preset',
+    btn_preset_reset: 'Khôi phục preset có sẵn này về nội dung gốc',
+    note_preset: 'Sửa prompt thoải mái. Dấu <b>*</b> sau tên preset = có chỉnh sửa chưa lưu. <b>Lưu đè</b> ghi lên preset đang chọn (preset có sẵn ★ sẽ giữ bản sửa của bạn, đánh dấu <i>đã sửa</i>, có nút khôi phục); <b>Lưu thành mới</b> tạo preset riêng. Placeholder: {{count}}, {{dialect_rule}}.',
+    st_preset_saved: 'Đã lưu preset.', st_preset_reset: 'Đã khôi phục preset gốc.', preset_overridden: 'đã sửa', ph_preset_name: 'Tên preset:',
     box_frame: 'Khung prompt', lbl_quality: 'Quality prefix',
     note_negative: 'Bỏ tick Negative với model không dùng negative (vd. Krea); negative của nhân vật cũng sẽ bị bỏ.',
     h_overrides: 'Ghi đè (0 = dùng profile model)',

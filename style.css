@@ -171,6 +171,17 @@ body.ifimgen-align-right .ifimgen-fold { text-align: right; }
 /* ---- planner preset: unsaved edits */
 #ifimgen_preset_text.ifimgen-dirty { border-color: #e0af68; box-shadow: inset 3px 0 0 #e0af68; }
 
+/* ---- job strip: thin bar under the Generate buttons; animates + shows Cancel while any image job runs */
+.ifimgen-jobs { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: .8em; opacity: .55; }
+.ifimgen-jobs-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .12); overflow: hidden; position: relative; }
+.ifimgen-jobs-fill { position: absolute; top: 0; bottom: 0; left: -35%; width: 35%; background: var(--ifg-accent); border-radius: 2px; display: none; }
+.ifimgen-jobs-text { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+.ifimgen-jobs .ifimgen-btn { display: none; height: 24px; width: 24px; min-width: 24px; }
+.ifimgen-jobs.busy { opacity: 1; }
+.ifimgen-jobs.busy .ifimgen-jobs-fill { display: block; animation: ifimgen-slide 1.2s ease-in-out infinite; }
+.ifimgen-jobs.busy .ifimgen-btn { display: inline-flex; }
+@keyframes ifimgen-slide { 0% { left: -35%; } 100% { left: 100%; } }
+
 /* ---- chat: collapsed images behind a small button */
 .ifimgen-fold { margin: 4px 0; }
 .ifimgen-fold-btn {

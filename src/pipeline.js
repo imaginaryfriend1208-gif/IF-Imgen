@@ -16,6 +16,17 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     const inflight = new Map(); // messageId -> AbortController
     const TEST_KEY = -1;        // inflight key for test renders
 
+    // Job observers (UI progress strip). Every start / end / status text of any image job goes through here.
+    const watchers = new Set();
+    let lastStatus = '';
+    const jobState = () => ({ running: inflight.size, ids: [...inflight.keys()], status: lastStatus });
+    const notify = () => { const st = jobState(); for (const fn of watchers) { try { fn(st); } catch { /* UI must not break the pipeline */ } } };
+    const begin = (key, controller) => { inflight.set(key, controller); lastStatus = ''; notify(); };
+    const end = key => { inflight.delete(key); if (!inflight.size) lastStatus = ''; notify(); };
+    const note = s => { lastStatus = s; notify(); };
+    /** Subscribe to job state; the callback fires immediately with the current state. Returns unsubscribe. */
+    const onJobs = fn => { watchers.add(fn); fn(jobState()); return () => watchers.delete(fn); };
+
     /**
      * Identity of the open chat, used ONLY to decide which IF Imgen entities are
      * bound (auto-loaded). Avatar filenames / chat id are opaque identifiers;
@@ -149,8 +160,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         if (!paragraphs.length) return { skipped: 'no usable paragraphs' };
 
         const controller = new AbortController();
-        inflight.set(messageId, controller);
-        const status = s => { log(`#${messageId} ${s}`); opt.onStatus?.(s); };
+        begin(messageId, controller);
+        const status = s => { log(`#${messageId} ${s}`); note(s); opt.onStatus?.(s); };
         const ident = chatIdentity(ctx);
         const originalText = msg.mes;
         try {
@@ -185,7 +196,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             status(`error: ${e.message}`);
             throw e;
         } finally {
-            inflight.delete(messageId);
+            end(messageId);
         }
     }
 
@@ -203,8 +214,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const useScene = String(scene ?? rec?.scene ?? '').trim();
         if (!useScene) throw new Error('No stored prompt for this image — use "Edit & regenerate" and type one.');
         const controller = new AbortController();
-        inflight.set(messageId, controller);
-        const status = s => { log(`#${messageId} regen ${s}`); onStatus?.(s); };
+        begin(messageId, controller);
+        const status = s => { log(`#${messageId} regen ${s}`); note(s); onStatus?.(s); };
         try {
             const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0 }, controller.signal, status);
             const list = records(msg);
@@ -219,7 +230,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             status(`error: ${e.message}`);
             throw e;
         } finally {
-            inflight.delete(messageId);
+            end(messageId);
         }
     }
 
@@ -236,8 +247,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const list = records(msg).filter(r => msg.mes.includes(r.url));
         if (!list.length) return { regenerated: 0, skipped: 0, none: true };
         const controller = new AbortController();
-        inflight.set(messageId, controller);
-        const status = s => { log(`#${messageId} regen-all ${s}`); onStatus?.(s); };
+        begin(messageId, controller);
+        const status = s => { log(`#${messageId} regen-all ${s}`); note(s); onStatus?.(s); };
         let regenerated = 0, skipped = 0;
         try {
             for (let i = 0; i < list.length; i++) {
@@ -259,7 +270,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             status(`error: ${e.message}`);
             throw e;
         } finally {
-            inflight.delete(messageId);
+            end(messageId);
         }
     }
 
@@ -289,8 +300,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         if (!final) throw new Error('Prompt is empty.');
         if (inflight.has(TEST_KEY)) throw new Error('A test image is already rendering.');
         const controller = new AbortController();
-        inflight.set(TEST_KEY, controller);
-        const status = s => { log(`test ${s}`); onStatus?.(s); };
+        begin(TEST_KEY, controller);
+        const status = s => { log(`test ${s}`); note(s); onStatus?.(s); };
         try {
             const { url, backend, model } = await renderRaw(getContext(), { prompt: final, negative: String(negative ?? '') }, controller.signal, status);
             /** @type {TestRecord} */
@@ -307,7 +318,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             status(`error: ${e.message}`);
             throw e;
         } finally {
-            inflight.delete(TEST_KEY);
+            end(TEST_KEY);
         }
     }
 
@@ -359,6 +370,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             inflight.get(messageId)?.abort();
         },
         isRunning: id => inflight.has(id),
+        onJobs,
         recordFor: (messageId, url) => findRecord(getContext().chat[messageId] ?? {}, url),
         compilePreview: (scene, signal) => compileScene(getContext(), scene, backends.active().id, signal),
         compileBoth,

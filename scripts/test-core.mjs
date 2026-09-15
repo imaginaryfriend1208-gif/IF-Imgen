@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 // IF Imgen - pure-module tests (no DOM, no ST). Run: node scripts/test-core.mjs
 import assert from 'node:assert/strict';
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
-import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS } from '../src/presets.js';
+import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
 import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
@@ -267,4 +267,21 @@ test('compareVersions: numeric per segment, leading v ignored, missing segments 
     assert.equal(compareVersions('0.9', '0.9.1'), -1);
     assert.equal(compareVersions('1.0.0', '0.99.99'), 1);
     assert.equal(compareVersions('', '0.1.0'), -1);
+});
+
+test('presets: Save overwrites in place (built-in -> override, user -> own record); reset restores; findPreset sees the override', () => {
+    const st = defaultSettings();
+    const id = BUILTIN_PRESETS[0].id;
+    assert.ok(overwritePreset(st, id, 'custom text'));
+    const b = allPresets(st).find(p => p.id === id);
+    assert.equal(b.system, 'custom text'); assert.equal(b.overridden, true); assert.equal(b.builtin, true);
+    assert.equal(findPreset(st, id).system, 'custom text', 'pipeline uses the override');
+    assert.equal(BUILTIN_PRESETS[0].system, BUILTIN_PRESETS[0].system.replace('custom text', ''), 'shipped preset object untouched');
+    overwritePreset(st, id, BUILTIN_PRESETS[0].system);
+    assert.equal(st.data.presetOverrides[id], undefined, 'saving the default text clears the override');
+    overwritePreset(st, id, 'again'); resetPreset(st, id);
+    assert.equal(allPresets(st).find(p => p.id === id).overridden, undefined);
+    const mine = createPreset({ name: 'Mine', system: 'a' }); st.data.presets.push(mine);
+    assert.ok(overwritePreset(st, mine.id, 'b')); assert.equal(mine.system, 'b');
+    assert.equal(overwritePreset(st, 'nope', 'x'), false);
 });

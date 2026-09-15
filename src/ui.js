@@ -1,7 +1,7 @@
 // IF Imgen - drawer UI: Settings / Characters / Personas / Styles / Gallery / How to use / Generate.
 import { escapeHtml, downloadJson, readFileAsText } from './util.js';
 import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS } from './entities.js';
-import { allPresets, createPreset, BUILTIN_PRESETS } from './presets.js';
+import { allPresets, createPreset, overwritePreset, resetPreset, BUILTIN_PRESETS } from './presets.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
 import { modelParams, hasProfile } from './prompt.js';
 import { ICONS, btn, fileBtn } from './icons.js';
@@ -214,18 +214,20 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     frameRow('ifimgen_use_negative', '#ifimgen_negative_row', 'useNegative');
 
     // Presets: every prompt (built-in too) is editable. Unsaved text lives in `presetDrafts` (per preset id, kept
-    // while switching presets) and shows as " *" after the name until Save. Saving an edited built-in forks a copy.
+    // while switching presets) and shows as " *" after the name until saved.
+    // Save = overwrite in place (built-ins store an override, shown as "(edited)" + reset button); Save as new = fork.
     const presetSel = $('ifimgen_preset');
     const presetText = $('ifimgen_preset_text');
     const presetDrafts = new Map();
-    const presetLabel = p => `${p.builtin ? '★ ' : ''}${p.name}${presetDrafts.has(p.id) ? ' *' : ''}`;
-    const curPreset = () => allPresets(settings).find(p => p.id === g.presetId) ?? BUILTIN_PRESETS[0];
+    const presetLabel = p => `${p.builtin ? '★ ' : ''}${p.name}${p.overridden ? ` (${t('preset_overridden')})` : ''}${presetDrafts.has(p.id) ? ' *' : ''}`;
+    const curPreset = () => allPresets(settings).find(p => p.id === g.presetId) ?? allPresets(settings)[0];
     function fillPresets() {
         const list = allPresets(settings);
         fillSelect(presetSel, list.map(p => ({ value: p.id, label: presetLabel(p) })), g.presetId);
         const cur = curPreset();
         presetText.value = presetDrafts.get(cur.id) ?? cur.system ?? '';
         $('ifimgen_preset_delete').disabled = Boolean(cur.builtin);
+        $('ifimgen_preset_reset').style.display = cur.overridden ? '' : 'none';
         $('ifimgen_preset_save').disabled = !presetDrafts.has(cur.id);
         presetText.classList.toggle('ifimgen-dirty', presetDrafts.has(cur.id));
     }
@@ -240,20 +242,18 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         presetText.classList.toggle('ifimgen-dirty', presetDrafts.has(cur.id));
     });
     const askPresetName = initial => getContext().callGenericPopup(t('ph_preset_name'), getContext().POPUP_TYPE.INPUT, initial);
-    $('ifimgen_preset_save').addEventListener('click', async () => {
+    $('ifimgen_preset_save').addEventListener('click', () => {
         const cur = curPreset();
         if (!presetDrafts.has(cur.id)) return;
-        const text = presetDrafts.get(cur.id);
-        if (cur.builtin) {
-            const name = await askPresetName(t('st_preset_copy', { name: cur.name }));
-            if (!name) return;
-            const p = createPreset({ name: String(name), system: text });
-            settings.data.presets.push(p); g.presetId = p.id;
-        } else {
-            cur.system = text;
-        }
+        overwritePreset(settings, cur.id, presetDrafts.get(cur.id));
         presetDrafts.delete(cur.id);
         save(); fillPresets(); status('ifimgen_gen_status', t('st_preset_saved'), 'ok');
+    });
+    $('ifimgen_preset_reset').addEventListener('click', () => {
+        const cur = curPreset();
+        if (!cur.overridden) return;
+        resetPreset(settings, cur.id); presetDrafts.delete(cur.id);
+        save(); fillPresets(); status('ifimgen_gen_status', t('st_preset_reset'), 'ok');
     });
     $('ifimgen_preset_saveas').addEventListener('click', async () => {
         const name = await askPresetName('');
@@ -345,6 +345,18 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             status('ifimgen_gen_status', `${t('st_done')} ${r.regenerated}${r.skipped ? ` (+${r.skipped} skipped: no stored scene)` : ''}`, 'ok');
         } catch (e) { status('ifimgen_gen_status', e.message, 'error'); }
     });
+
+    // ---- job strip: reflects every image job (auto, per-message button, slash, regen, tests); Cancel aborts them all.
+    const jobsEl = $('ifimgen_jobs');
+    const jobsText = jobsEl.querySelector('.ifimgen-jobs-text');
+    $('ifimgen_jobs_cancel').addEventListener('click', () => pipeline.cancel());
+    const stopJobs = pipeline.onJobs?.(st => {
+        const busy = st.running > 0;
+        jobsEl.classList.toggle('busy', busy);
+        jobsText.textContent = busy ? `${t('job_running', { n: st.running })}${st.status ? ` — ${st.status}` : ''}` : t('job_idle');
+    });
+    // Unsubscribe when the drawer is re-mounted (language switch replaces root's children).
+    new MutationObserver((_, obs) => { if (!root.contains(jobsEl)) { stopJobs?.(); obs.disconnect(); } }).observe(root, { childList: true });
 
     // ============================================================ Entities
     for (const tab of ENTITY_TABS()) mountEntityTab(tab);
@@ -628,6 +640,7 @@ function generatePanel() {
             <div class="ifimgen-row"><select id="ifimgen_preset" class="text_pole"></select>
                 ${btn({ id: 'ifimgen_preset_save', cls: 'primary', icon: 'save', title: t('btn_save_preset') })}
                 ${btn({ id: 'ifimgen_preset_saveas', icon: 'plus', title: t('btn_save_as') })}
+                ${btn({ id: 'ifimgen_preset_reset', icon: 'refresh', title: t('btn_preset_reset'), attrs: 'style="display:none"' })}
                 ${btn({ id: 'ifimgen_preset_delete', cls: 'danger', icon: 'trash', title: t('btn_delete_preset') })}
                 ${btn({ id: 'ifimgen_preset_export', icon: 'download', title: t('btn_export_presets') })}
                 ${fileBtn({ inputId: 'ifimgen_preset_import', title: t('btn_import_presets') })}</div>
@@ -668,6 +681,11 @@ function generatePanel() {
             ${btn({ id: 'ifimgen_run_last', cls: 'primary', icon: 'play', label: t('btn_run_last') })}
             ${btn({ id: 'ifimgen_regen_last', icon: 'refresh', label: t('btn_regen_last'), title: t('tip_regen_last') })}
             <span id="ifimgen_gen_status" class="ifimgen-status"></span>
+        </div>
+        <div id="ifimgen_jobs" class="ifimgen-jobs">
+            <div class="ifimgen-jobs-bar"><div class="ifimgen-jobs-fill"></div></div>
+            <span class="ifimgen-jobs-text"></span>
+            ${btn({ id: 'ifimgen_jobs_cancel', cls: 'danger', icon: 'x', title: t('job_cancel') })}
         </div>
     </div>`;
 }
