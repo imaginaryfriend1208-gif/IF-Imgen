@@ -40,4 +40,5 @@ export function btn({ id = '', cls = '', icon = '', label = '', title = '', attr
 /** File-input button (label element wrapping a hidden <input type=file>). */
 export function fileBtn({ cls = '', icon = 'upload', label = '', title = '', inputCls = '', inputId = '' } = {}) {
     const t = title || label || 'Import';
-    return `<label class="ifimgen-btn ${label ? '' : 'icon'} ${cls}" title="${t}" aria-label="
+    return `<label class="ifimgen-btn ${label ? '' : 'icon'} ${cls}" title="${t}" aria-label="${t}">${ICONS[icon]}${label ? `<span>${label}</span>` : ''}<input type="file" accept=".json" ${inputId ? `id="${inputId}"` : ''} class="${inputCls}"></label>`;
+}

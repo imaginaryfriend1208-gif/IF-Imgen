@@ -250,6 +250,17 @@ NEGATIVE:
 ${negative || '(disabled / empty)'}`;
         } catch (e) { out.textContent = `Error: ${e.message}`; }
     });
+    $('ifimgen_last_req').addEventListener('click', async () => {
+        const out = $('ifimgen_preview_out');
+        const reqs = llm.lastRequests();
+        if (!reqs.length) { out.textContent = 'No LLM request has been made yet in this session. Generate an image first.'; return; }
+        const NL = String.fromCharCode(10);
+        const text = reqs.map((r, i) => `===== REQUEST ${i + 1}/${reqs.length} · ${r.at} · ${r.target}` + NL
+            + r.messages.map(m => `--- [${m.role}]` + NL + m.content).join(NL + NL)
+            + NL + NL + '--- [response]' + NL + (r.response || '(pending / empty)')).join(NL + NL + NL);
+        out.textContent = text;
+        try { await navigator.clipboard.writeText(text); toastr.success('Copied to clipboard.', 'IF Imgen'); } catch { toastr.info('Shown below (clipboard not available).', 'IF Imgen'); }
+    });
     $('ifimgen_run_last').addEventListener('click', async () => {
         const ctx = getContext();
         let id = ctx.chat.length - 1;
@@ -554,7 +565,8 @@ function generatePanel() {
         <div class="ifimgen-box">
             ${boxTitle('locate', 'Prompt preview')}
             <div class="ifimgen-row"><input id="ifimgen_preview_scene" class="text_pole" type="text" placeholder="$rosario sews a wound on $yenka's side, dim bedroom, lamp light">${btn({ id: 'ifimgen_preview', icon: 'locate', label: 'Compile' })}</div>
-            <pre id="ifimgen_preview_out" class="ifimgen-pre"></pre>
+            <div class="ifimgen-row">${btn({ id: 'ifimgen_preview', icon: 'play', label: 'Compile' })}${btn({ id: 'ifimgen_last_req', icon: 'clipboard', label: 'Show last LLM request' })}</div>
+            <div class="ifimgen-note">"Show last LLM request" prints the exact messages sent to the LLM in the last generation (planner, and refine if enabled) and copies them to the clipboard — check there that no character-card text is present.</div>
             <div class="ifimgen-note">Shows exactly which characters / personas / style are attached and the final prompt the backend receives.</div>
         </div>
         <div class="ifimgen-row">${btn({ id: 'ifimgen_run_last', cls: 'primary', icon: 'play', label: 'Generate for last reply' })}<span id="ifimgen_gen_status" class="ifimgen-status"></span></div>

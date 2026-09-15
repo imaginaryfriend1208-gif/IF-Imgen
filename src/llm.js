@@ -45,26 +45,25 @@ export function createLlm({ settings, getContext }) {
         return d?.choices?.[0]?.message?.content ?? '';
     }
 
-    /** Last few requests, newest last: { at, mode, target, messages, response } */
-    const history = [];
-
-    /** Last few requests, newest last: { at, mode, target, messages, response } */
-    const history = [];
-
-    /** Last few requests, newest last: { at, mode, target, messages, response } */
+    /** Last few requests, newest last: { at, mode, target, messages, response } — for the "Show last LLM request" button. */
     const history = [];
 
     return {
         listProfiles,
-        lastRequests: () => history.slice(),
         lastRequests: () => history.slice(),
         /** @returns {Promise<string>} */
         async chat({ system, user, signal }) {
             const messages = [];
             if (system) messages.push({ role: 'system', content: system });
             messages.push({ role: 'user', content: user });
-            const rec = { at: new Date().toISOString(), mode: cfg().mode, target: cfg().mode === 'custom' ? cfg().custom.model : `profile:${cfg().profileId}`, messages, response: '' };
-            history.push(rec); if (history.length > 6) history.shift();
+            const rec = {
+                at: new Date().toISOString(),
+                mode: cfg().mode,
+                target: cfg().mode === 'custom' ? cfg().custom.model : 'profile:' + cfg().profileId,
+                messages, response: '',
+            };
+            history.push(rec);
+            if (history.length > 6) history.shift();
             const text = cfg().mode === 'custom' ? await viaCustom(messages, signal) : await viaProfile(messages, signal);
             rec.response = String(text ?? '').trim();
             return rec.response;
