@@ -565,7 +565,7 @@ function generatePanel() {
         <div class="ifimgen-box">
             ${boxTitle('locate', 'Prompt preview')}
             <div class="ifimgen-row"><input id="ifimgen_preview_scene" class="text_pole" type="text" placeholder="$rosario sews a wound on $yenka's side, dim bedroom, lamp light">${btn({ id: 'ifimgen_preview', icon: 'locate', label: 'Compile' })}</div>
-            <div class="ifimgen-row">${btn({ id: 'ifimgen_preview', icon: 'play', label: 'Compile' })}${btn({ id: 'ifimgen_last_req', icon: 'clipboard', label: 'Show last LLM request' })}</div>
+            <div class="ifimgen-row">${btn({ id: 'ifimgen_last_req', icon: 'clipboard', label: 'Show last LLM request' })}</div>
             <div class="ifimgen-note">"Show last LLM request" prints the exact messages sent to the LLM in the last generation (planner, and refine if enabled) and copies them to the clipboard — check there that no character-card text is present.</div>
             <div class="ifimgen-note">Shows exactly which characters / personas / style are attached and the final prompt the backend receives.</div>
         </div>
