@@ -58,7 +58,6 @@ export function createLlm({ settings, getContext }) {
         listProfiles,
         lastRequests: () => history.slice(),
         lastRequests: () => history.slice(),
-        lastRequests: () => history.slice(),
         /** @returns {Promise<string>} */
         async chat({ system, user, signal }) {
             const messages = [];
@@ -66,4 +65,9 @@ export function createLlm({ settings, getContext }) {
             messages.push({ role: 'user', content: user });
             const rec = { at: new Date().toISOString(), mode: cfg().mode, target: cfg().mode === 'custom' ? cfg().custom.model : `profile:${cfg().profileId}`, messages, response: '' };
             history.push(rec); if (history.length > 6) history.shift();
-            const text = cfg().mode === 'custom' ? await viaCustom(messages, s
+            const text = cfg().mode === 'custom' ? await viaCustom(messages, signal) : await viaProfile(messages, signal);
+            rec.response = String(text ?? '').trim();
+            return rec.response;
+        },
+    };
+}
