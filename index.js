@@ -14,7 +14,7 @@ import { mountDrawer } from './src/ui.js';
 import { createViewer, collectChatImages } from './src/gallery.js';
 import { t, setLang } from './src/i18n.js';
 
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);

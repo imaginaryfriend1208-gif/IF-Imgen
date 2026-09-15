@@ -38,7 +38,7 @@ const en = {
     box_fragments: 'Prompt fragments', lbl_tags: 'Tags (danbooru)', lbl_natural: 'Natural description', lbl_negative: 'Negative',
     lbl_details: 'Details ($kw.key)',
     ph_details: 'one per line, key: description\noutfit: white button-up shirt, black skirt\nback: a big tattoo on the left shoulder blade\nnsfw: small breasts, pierced navel',
-    note_details: 'Suggested keys: {keys} (any lowercase key works). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).',
+    note_details: 'Suggested keys: {keys} (any key works, Vietnamese too: <code>trang phục:</code> becomes <code>$kw.trang_phuc</code>). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).',
     lbl_loras: 'LoRA lines', ph_loras: '<lora:name:0.8> one per line', lbl_lorapos: 'LoRA position',
     box_bind: 'Bind — auto-load when opened',
     note_bind: 'Binding only links this entry to a chat / card / persona so it loads automatically. Nothing is read from the card itself.',
@@ -241,3 +241,4 @@ const vi = {
 };
 
 const STRINGS = { en, vi };
+;

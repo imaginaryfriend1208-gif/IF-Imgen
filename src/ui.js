@@ -469,7 +469,7 @@ function entityPanel({ kind, tab, label, icon, hint }) {
         <div class="ifimgen-box">
             ${boxTitle('user', t('box_identity'))}
             <div class="ifimgen-row"><label>${t('lbl_name')}</label><input class="text_pole ent-name" type="text"></div>
-            <div class="ifimgen-row"><label>${t('lbl_keyword')}</label><input class="text_pole ent-keyword" type="text" placeholder="lyna → $lyna"></div>
+            <div class="ifimgen-row"><label>${t('lbl_keyword')}</label><input class="text_pole ent-keyword" type="text" placeholder="lyna → $lyna · Dư Tô → $du_to"></div>
             <div class="ifimgen-row"><label>${t('lbl_aliases')}</label><input class="text_pole ent-aliases" type="text" placeholder="${escapeHtml(t('ph_aliases'))}"></div>
         </div>
         <div class="ifimgen-box">
