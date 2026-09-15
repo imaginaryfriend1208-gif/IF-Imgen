@@ -27,10 +27,21 @@ export function splitParagraphs(mes, minChars = 1) {
     return out;
 }
 
+/**
+ * Markdown image URLs must not contain whitespace or parentheses, otherwise
+ * showdown leaves the ![..](..) as plain text (character folders often have spaces).
+ */
+export function safeImageUrl(url) {
+    return String(url ?? '').trim()
+        .replace(/\s/g, '%20')
+        .replace(/\(/g, '%28')
+        .replace(/\)/g, '%29');
+}
+
 /** Markdown snippet for one generated image. */
 export function imageSnippet(url, title = '') {
     const safeTitle = String(title).replace(/["\n]/g, ' ').slice(0, 300);
-    return `${IMG_MARK}\n![IF Imgen](${url} "${safeTitle}")`;
+    return `${IMG_MARK}\n![IF Imgen](${safeImageUrl(url)} "${safeTitle}")`;
 }
 
 /**
@@ -56,6 +67,18 @@ export function stripImages(mes) {
     return String(mes ?? '')
         .replace(new RegExp(`\\n*${IMG_MARK}\\n!\\[IF Imgen\\]\\([^)]*\\)`, 'g'), '')
         .replace(/\n{3,}/g, '\n\n');
+}
+
+/**
+ * All IF Imgen images in a message (also tolerates legacy URLs containing spaces).
+ * @returns {{url:string,title:string}[]}
+ */
+export function listImages(mes) {
+    const out = [];
+    const re = /!\[IF Imgen\]\(([^)"]+?)\s*(?:"([^"]*)")?\)/g;
+    let m;
+    while ((m = re.exec(String(mes ?? '')))) out.push({ url: m[1].trim(), title: m[2] ?? '' });
+    return out;
 }
 
 export function countImages(mes) {

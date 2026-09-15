@@ -1,6 +1,7 @@
 // IF Imgen - final prompt compiler. Pure module.
 // Order: [front LoRAs] quality, style tags, [after_style LoRAs], character tags, persona tags, scene, [end LoRAs]
 import { joinTags } from './util.js';
+import { PARAM_DEFAULTS } from './settings.js';
 
 const LORA_RE = /<lora:[^>]+>/gi;
 
@@ -33,10 +34,11 @@ export function compilePrompt(a) {
     const scene = stripKeywordTokens(a.scene, ents);
 
     const pick = e => natural ? (e.natural || e.tags) : (e.tags || e.natural);
+    const useQuality = g.useQualityPrefix !== false && !natural;
 
     let prompt = joinTags(
         lorasAt(all, 'front'),
-        natural ? '' : g.qualityPrefix,
+        useQuality ? g.qualityPrefix : '',
         styleList.map(pick),
         lorasAt(all, 'after_style'),
         a.characters.map(pick),
@@ -44,7 +46,8 @@ export function compilePrompt(a) {
         scene,
         lorasAt(all, 'end'),
     );
-    let negative = joinTags(g.negative, all.map(e => e.negative));
+    // Negative disabled -> send nothing at all (entity negatives included), for models that take no negative.
+    let negative = g.useNegative === false ? '' : joinTags(g.negative, all.map(e => e.negative));
 
     if (a.backend === 'nai') {
         // NovelAI has no LoRA syntax.
@@ -53,17 +56,28 @@ export function compilePrompt(a) {
     return { prompt, negative };
 }
 
-/** Effective numeric params: overrides (non-zero) win over backend defaults. */
+/** Parameters for one model: saved profile > backend fallback profile ('*') > built-in defaults. */
+export function modelParams(settings, backend, model) {
+    const prof = settings.connection.profiles?.[backend] ?? {};
+    return { ...PARAM_DEFAULTS[backend], ...(prof['*'] ?? {}), ...(model && prof[model] ? prof[model] : {}) };
+}
+
+export function hasProfile(settings, backend, model) {
+    return Boolean(model && settings.connection.profiles?.[backend]?.[model]);
+}
+
+/** Effective numeric params for the backend's default model: overrides (non-zero) win over the model profile. */
 export function effectiveParams(settings, backend) {
     const base = settings.connection[backend];
+    const p = modelParams(settings, backend, base.model);
     const o = settings.generate.overrides ?? {};
     return {
-        steps: o.steps > 0 ? o.steps : base.steps,
-        cfg: o.cfg > 0 ? o.cfg : base.cfg,
-        width: o.width > 0 ? o.width : base.width,
-        height: o.height > 0 ? o.height : base.height,
-        sampler: base.sampler,
-        scheduler: base.scheduler,
+        steps: o.steps > 0 ? o.steps : p.steps,
+        cfg: o.cfg > 0 ? o.cfg : p.cfg,
+        width: o.width > 0 ? o.width : p.width,
+        height: o.height > 0 ? o.height : p.height,
+        sampler: p.sampler,
+        scheduler: p.scheduler,
         model: base.model,
     };
 }

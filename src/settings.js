@@ -2,24 +2,26 @@
 import { BUILTIN_PRESETS } from './presets.js';
 
 export const MODULE = 'IF_Imgen';
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
+
+/** Per-model generation parameters (one profile per model, per backend). */
+export const PARAM_KEYS = ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height'];
+export const PARAM_DEFAULTS = {
+    sd: { sampler: 'Euler a', scheduler: 'Automatic', steps: 20, cfg: 6, width: 832, height: 1216 },
+    nai: { sampler: 'k_euler_ancestral', scheduler: 'karras', steps: 28, cfg: 5, width: 832, height: 1216 },
+};
 
 export function defaultSettings() {
     return {
         version: SETTINGS_VERSION,
         enabled: true,
         connection: {
-            backend: 'sd', // 'sd' | 'nai'
-            sd: {
-                url: 'http://127.0.0.1:7861', auth: '', model: '', models: [],
-                sampler: 'Euler a', scheduler: 'Automatic',
-                steps: 20, cfg: 6, width: 832, height: 1216,
-            },
-            nai: {
-                apiKey: '', model: 'nai-diffusion-4-5-full',
-                sampler: 'k_euler_ancestral', scheduler: 'karras',
-                steps: 28, cfg: 5, width: 832, height: 1216, variety: false,
-            },
+            backend: 'sd', // 'sd' | 'nai'  (the ACTIVE image API)
+            sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [] },
+            nai: { apiKey: '', model: 'nai-diffusion-4-5-full', variety: false },
+            // profiles[backend][modelName] = { sampler, scheduler, steps, cfg, width, height }
+            // profiles[backend]['*'] = fallback for models without a saved profile
+            profiles: { sd: {}, nai: {} },
             llm: {
                 mode: 'st_profile', // 'st_profile' | 'custom'
                 profileId: '',
@@ -34,9 +36,11 @@ export function defaultSettings() {
             contextMessages: 4,         // K previous messages given to planner
             presetId: BUILTIN_PRESETS[0].id,
             dialect: 'tags',            // 'tags' | 'natural'
+            useQualityPrefix: true,
             qualityPrefix: 'masterpiece, best quality, amazing quality',
+            useNegative: true,          // some models (e.g. Krea) take no negative prompt
             negative: 'lowres, bad anatomy, bad hands, text, error, worst quality, low quality, jpeg artifacts, signature, watermark',
-            overrides: { steps: 0, cfg: 0, width: 0, height: 0 }, // 0 = inherit from connection
+            overrides: { steps: 0, cfg: 0, width: 0, height: 0 }, // 0 = inherit from model profile
             minParagraphChars: 40,
             showButton: true,
         },
@@ -57,11 +61,31 @@ function fill(target, defaults) {
     return target;
 }
 
+/** v1 -> v2: sampler/steps/... used to live on connection.sd / connection.nai; move them into model profiles. */
+export function migrate(s) {
+    const from = Number(s.version) || 1;
+    if (from < 2) {
+        for (const be of ['sd', 'nai']) {
+            const b = s.connection?.[be];
+            if (!b || !PARAM_KEYS.some(k => b[k] !== undefined)) continue;
+            const p = Object.fromEntries(PARAM_KEYS.map(k => [k, b[k] ?? PARAM_DEFAULTS[be][k]]));
+            for (const k of PARAM_KEYS) delete b[k];
+            s.connection.profiles[be] ??= {};
+            s.connection.profiles[be]['*'] = p;
+            if (b.model) s.connection.profiles[be][b.model] ??= { ...p };
+        }
+    }
+    s.version = SETTINGS_VERSION;
+    return s;
+}
+
 /** Ensure the namespace exists and is migrated. Returns live reference. */
 export function ensureSettings(extensionSettings) {
     extensionSettings[MODULE] ??= {};
     const s = extensionSettings[MODULE];
+    const hadVersion = s.version;
     fill(s, defaultSettings());
-    s.version = SETTINGS_VERSION;
+    if (hadVersion !== undefined) s.version = hadVersion; // fill() must not fake a migration
+    migrate(s);
     return s;
 }

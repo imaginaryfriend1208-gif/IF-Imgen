@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // IF Imgen - pure-module tests (no DOM, no ST). Run: node scripts/test-core.mjs
 import assert from 'node:assert/strict';
-import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages } from '../src/paragraphs.js';
+import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, listImages, safeImageUrl, IMG_MARK } from '../src/paragraphs.js';
 import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
-import { compilePrompt, effectiveParams } from '../src/prompt.js';
-import { defaultSettings } from '../src/settings.js';
+import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
+import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
+import { collectChatImages } from '../src/gallery.js';
 
 let passed = 0;
 const test = (name, fn) => { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); process.exitCode = 1; } };
@@ -82,10 +83,49 @@ test('compilePrompt order: front lora, quality, style, after_style lora, char, p
     assert.ok(!nai.prompt.includes('<lora:'));
 });
 
-test('effectiveParams: non-zero overrides win', () => {
+test('compilePrompt: quality/negative toggles', () => {
+    const ents = resolveEntities(s, { text: 'x', charAvatar: 'lyna.png' });
+    const s2 = structuredClone(s); s2.generate.useQualityPrefix = false; s2.generate.useNegative = false;
+    const r = compilePrompt({ scene: 'x', ...ents, settings: s2, backend: 'sd' });
+    assert.ok(!r.prompt.includes('masterpiece'));
+    assert.equal(r.negative, '', 'negative fully suppressed incl. entity negatives');
+});
+
+test('modelParams: profile > fallback > defaults; effectiveParams: overrides win', () => {
+    assert.deepEqual(modelParams(s, 'sd', 'foo'), PARAM_DEFAULTS.sd);
+    s.connection.profiles.sd['*'] = { steps: 30 };
+    s.connection.profiles.sd['modelA'] = { cfg: 4, width: 1024 };
+    s.connection.sd.model = 'modelA';
+    assert.ok(hasProfile(s, 'sd', 'modelA') && !hasProfile(s, 'sd', 'modelB'));
+    const p0 = effectiveParams(s, 'sd');
+    assert.equal(p0.steps, 30); assert.equal(p0.cfg, 4); assert.equal(p0.width, 1024); assert.equal(p0.model, 'modelA'); assert.equal(p0.sampler, 'Euler a');
     s.generate.overrides.steps = 12;
-    const p = effectiveParams(s, 'sd');
-    assert.equal(p.steps, 12); assert.equal(p.cfg, s.connection.sd.cfg);
+    assert.equal(effectiveParams(s, 'sd').steps, 12);
+});
+
+test('settings migration v1 -> v2 moves sampler/steps into model profiles', () => {
+    const store = { IF_Imgen: { version: 1, connection: { backend: 'sd', sd: { url: 'u', model: 'ckpt', steps: 33, cfg: 7, width: 640, height: 960, sampler: 'DPM++ 2M', scheduler: 'Karras' }, nai: { apiKey: '', model: 'nai-diffusion-3' } } } };
+    const m = ensureSettings(store);
+    assert.equal(m.version, SETTINGS_VERSION);
+    assert.equal(m.connection.sd.steps, undefined);
+    assert.deepEqual(m.connection.profiles.sd['ckpt'], { sampler: 'DPM++ 2M', scheduler: 'Karras', steps: 33, cfg: 7, width: 640, height: 960 });
+    assert.equal(m.connection.profiles.sd['*'].steps, 33);
+    assert.equal(m.connection.profiles.nai['*'], undefined, 'nai had no legacy params');
+    assert.equal(m.generate.useNegative, true, 'new keys filled');
+    const fresh = ensureSettings({});
+    assert.equal(fresh.version, SETTINGS_VERSION); assert.deepEqual(fresh.connection.profiles, { sd: {}, nai: {} });
+});
+
+test('image URLs: spaces/parens encoded so markdown renders; listImages + gallery tolerate legacy URLs', () => {
+    assert.equal(safeImageUrl('/user/images/Don Rosario (x)/a.png'), '/user/images/Don%20Rosario%20%28x%29/a.png');
+    const snip = imageSnippet('/user/images/Don Rosario/a.png', 'a "quoted" title');
+    assert.ok(snip.includes('(/user/images/Don%20Rosario/a.png "a  quoted  title")'));
+    const legacy = ['p1', '', IMG_MARK, '![IF Imgen](/user/images/Don Rosario/old.png "old title")', '', snip].join(String.fromCharCode(10));
+    const imgs = listImages(legacy);
+    assert.equal(imgs.length, 2); assert.equal(imgs[0].url, '/user/images/Don Rosario/old.png'); assert.equal(imgs[0].title, 'old title');
+    assert.equal(countImages(legacy), 2); assert.equal(stripImages(legacy), 'p1');
+    const g = collectChatImages([{ name: 'A', mes: 'no image' }, { name: 'B', mes: legacy }]);
+    assert.equal(g.length, 2); assert.equal(g[0].messageId, 1); assert.equal(g[0].url, '/user/images/Don%20Rosario/old.png');
 });
 
 test('import/export roundtrip + keyword dedupe', () => {

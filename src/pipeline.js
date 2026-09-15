@@ -29,6 +29,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         m.mes = text;
         if (Array.isArray(m.swipes) && typeof m.swipe_id === 'number') m.swipes[m.swipe_id] = text;
         ctx.updateMessageBlock(messageId, m);
+        try { onChange(messageId); } catch { /* UI hook must never break the pipeline */ }
     }
 
     /**

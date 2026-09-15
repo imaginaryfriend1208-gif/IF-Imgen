@@ -1,13 +1,28 @@
-// IF Imgen - drawer UI: Settings / Generate / Characters / Personas / Styles.
-import { escapeHtml, downloadJson, readFileAsText, splitList } from './util.js';
+// IF Imgen - drawer UI: Settings / Characters / Personas / Styles / Gallery / Generate.
+import { escapeHtml, downloadJson, readFileAsText } from './util.js';
 import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS } from './entities.js';
 import { allPresets, createPreset, BUILTIN_PRESETS } from './presets.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
+import { PARAM_KEYS } from './settings.js';
+import { modelParams, hasProfile } from './prompt.js';
+import { ICONS, btn, fileBtn } from './icons.js';
+import { mountGallery, galleryMarkup } from './gallery.js';
 
 const ENTITY_TABS = [
-    { kind: 'characters', tab: 'chars', label: 'Characters', hint: 'Bind to ST character cards. Mentioned in plan via $keyword.' },
-    { kind: 'personas', tab: 'personas', label: 'Personas', hint: 'Your user personas. Bind to ST persona avatars.' },
-    { kind: 'styles', tab: 'styles', label: 'Styles', hint: 'One style per image: bound style > keyword > default.' },
+    { kind: 'characters', tab: 'chars', label: 'Characters', icon: 'users', hint: 'Bind to ST character cards. Mentioned in plan via $keyword.' },
+    { kind: 'personas', tab: 'personas', label: 'Personas', icon: 'user', hint: 'Your user personas. Bind to ST persona avatars.' },
+    { kind: 'styles', tab: 'styles', label: 'Styles', icon: 'palette', hint: 'One style per image: bound style > keyword > default.' },
+];
+// Tab order: configure everything first, Generate last.
+const MAIN_TABS = [
+    { tab: 'settings', label: 'Settings', icon: 'settings' },
+    ...ENTITY_TABS,
+    { tab: 'gallery', label: 'Gallery', icon: 'images' },
+    { tab: 'generate', label: 'Generate', icon: 'sparkles' },
+];
+const BACKENDS = [
+    { id: 'sd', label: 'Comfy / A1111', icon: 'box' },
+    { id: 'nai', label: 'NovelAI', icon: 'cloud' },
 ];
 
 export function mountDrawer({ root, settings, save, backends, llm, pipeline, getContext, version }) {
@@ -15,56 +30,113 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
     const $ = id => root.querySelector(`#${id}`);
     const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; n.className = `ifimgen-status ${cls}`; };
 
-    // ---- tabs
-    root.querySelectorAll('.ifimgen-tabs .menu_button').forEach(b => b.addEventListener('click', () => {
-        root.querySelectorAll('.ifimgen-tabs .menu_button').forEach(x => x.classList.toggle('active', x === b));
+    // ---- main tabs
+    root.querySelectorAll('.ifimgen-tabs .ifimgen-btn').forEach(b => b.addEventListener('click', () => {
+        root.querySelectorAll('.ifimgen-tabs .ifimgen-btn').forEach(x => x.classList.toggle('active', x === b));
         root.querySelectorAll('.ifimgen-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === b.dataset.tab));
+        if (b.dataset.tab === 'gallery') gallery.refresh();
     }));
 
-    // ---- Settings tab
-    const c = settings.connection;
     const bind = (id, get, set, evt = 'change') => {
         const el = $(id); if (!el) return;
         if (el.type === 'checkbox') el.checked = Boolean(get()); else el.value = get() ?? '';
         el.addEventListener(evt, () => { set(el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value); save(); });
     };
-    const showBackend = () => root.querySelectorAll('[data-backend]').forEach(b => b.style.display = b.dataset.backend === c.backend ? '' : 'none');
-    bind('ifimgen_backend', () => c.backend, v => { c.backend = v; showBackend(); fillModels(); });
+
+    // ============================================================ Settings
+    const c = settings.connection;
+    let viewing = c.backend; // sub-tab currently shown (may differ from the ACTIVE backend)
+
+    // ---- Box 1: Image API (sub-tabs + Active toggle)
+    function renderBackendTabs() {
+        root.querySelectorAll('.ifimgen-subtab').forEach(t => {
+            t.classList.toggle('viewing', t.dataset.be === viewing);
+            t.querySelector('.ifimgen-dot').classList.toggle('on', t.dataset.be === c.backend);
+        });
+        root.querySelectorAll('[data-backend]').forEach(b => b.style.display = b.dataset.backend === viewing ? '' : 'none');
+        const act = $('ifimgen_activate');
+        const isActive = c.backend === viewing;
+        act.classList.toggle('active', isActive);
+        act.querySelector('span').textContent = isActive ? 'Active' : 'Set active';
+        act.disabled = isActive;
+        $('ifimgen_model_be').textContent = BACKENDS.find(b => b.id === viewing)?.label ?? viewing;
+        fillModels();
+    }
+    root.querySelectorAll('.ifimgen-subtab').forEach(t => t.addEventListener('click', () => { viewing = t.dataset.be; renderBackendTabs(); }));
+    $('ifimgen_activate').addEventListener('click', () => { c.backend = viewing; save(); renderBackendTabs(); status('ifimgen_conn_status', `${BACKENDS.find(b => b.id === viewing).label} is now the active image API.`, 'ok'); });
     bind('ifimgen_sd_url', () => c.sd.url, v => c.sd.url = v.trim());
     bind('ifimgen_sd_auth', () => c.sd.auth, v => c.sd.auth = v.trim());
     bind('ifimgen_nai_key', () => c.nai.apiKey, v => c.nai.apiKey = v.trim());
     bind('ifimgen_nai_variety', () => c.nai.variety, v => c.nai.variety = v);
-    for (const be of ['sd', 'nai']) for (const k of ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height']) {
-        bind(`ifimgen_${be}_${k}`, () => c[be][k], v => c[be][k] = v);
-    }
-    fillSelect($('ifimgen_nai_sampler'), NAI_SAMPLERS, c.nai.sampler);
-    fillSelect($('ifimgen_nai_scheduler'), NAI_SCHEDULERS, c.nai.scheduler);
-    showBackend();
-
-    function fillModels() {
-        const list = c.backend === 'nai' ? NAI_MODELS : c.sd.models;
-        const sel = $('ifimgen_model');
-        fillSelect(sel, list, c[c.backend].model, list.length ? null : '-- Fetch models first --');
-        $('ifimgen_model_badge').style.display = c[c.backend].model ? '' : 'none';
-    }
-    fillModels();
-    $('ifimgen_model').addEventListener('change', e => { c[c.backend].model = e.target.value; save(); fillModels(); });
     $('ifimgen_test').addEventListener('click', async () => {
         status('ifimgen_conn_status', 'Testing…');
-        try { status('ifimgen_conn_status', await backends.active().test(), 'ok'); }
+        try { status('ifimgen_conn_status', await backends.get(viewing).test(), 'ok'); }
         catch (e) { status('ifimgen_conn_status', e.message, 'error'); }
     });
+
+    // ---- Box 2: model + per-model profile
+    const modelSel = $('ifimgen_model');
+    let editingModel = ''; // model whose params are shown in the box
+    function fillModels() {
+        const list = viewing === 'nai' ? NAI_MODELS : c.sd.models;
+        editingModel = list.includes(editingModel) ? editingModel : (c[viewing].model || list[0] || '');
+        fillSelect(modelSel, list.map(m => ({ value: m, label: `${m === c[viewing].model ? '★ ' : ''}${m}${hasProfile(settings, viewing, m) ? '' : '  (no profile)'}` })), editingModel, list.length ? null : '-- Fetch models first --');
+        loadParams();
+    }
+    function loadParams() {
+        const p = modelParams(settings, viewing, editingModel);
+        const naiMode = viewing === 'nai';
+        $('ifimgen_p_sampler_sd').style.display = naiMode ? 'none' : '';
+        $('ifimgen_p_scheduler_sd').style.display = naiMode ? 'none' : '';
+        $('ifimgen_p_sampler_nai').style.display = naiMode ? '' : 'none';
+        $('ifimgen_p_scheduler_nai').style.display = naiMode ? '' : 'none';
+        if (naiMode) { fillSelect($('ifimgen_p_sampler_nai'), NAI_SAMPLERS, p.sampler); fillSelect($('ifimgen_p_scheduler_nai'), NAI_SCHEDULERS, p.scheduler); }
+        else { $('ifimgen_p_sampler_sd').value = p.sampler; $('ifimgen_p_scheduler_sd').value = p.scheduler; }
+        for (const k of ['steps', 'cfg', 'width', 'height']) $(`ifimgen_p_${k}`).value = p[k];
+        const isDefault = editingModel && editingModel === c[viewing].model;
+        $('ifimgen_model_badge').style.display = isDefault ? '' : 'none';
+        $('ifimgen_profile_badge').textContent = hasProfile(settings, viewing, editingModel) ? 'profile saved' : 'using fallback params';
+        $('ifimgen_profile_badge').classList.toggle('active', hasProfile(settings, viewing, editingModel));
+        $('ifimgen_set_default').disabled = !editingModel || isDefault;
+        $('ifimgen_save_profile').disabled = !editingModel;
+    }
+    function readParams() {
+        const naiMode = viewing === 'nai';
+        return {
+            sampler: naiMode ? $('ifimgen_p_sampler_nai').value : $('ifimgen_p_sampler_sd').value.trim(),
+            scheduler: naiMode ? $('ifimgen_p_scheduler_nai').value : $('ifimgen_p_scheduler_sd').value.trim(),
+            steps: Number($('ifimgen_p_steps').value), cfg: Number($('ifimgen_p_cfg').value),
+            width: Number($('ifimgen_p_width').value), height: Number($('ifimgen_p_height').value),
+        };
+    }
+    modelSel.addEventListener('change', () => { editingModel = modelSel.value; loadParams(); });
     $('ifimgen_fetch_models').addEventListener('click', async () => {
         status('ifimgen_model_status', 'Fetching…');
         try {
-            const models = await backends.active().fetchModels();
-            if (c.backend === 'sd') c.sd.models = models;
-            if (!c[c.backend].model && models[0]) c[c.backend].model = models[0];
+            const models = await backends.get(viewing).fetchModels();
+            if (viewing === 'sd') c.sd.models = models;
+            if (!c[viewing].model && models[0]) c[viewing].model = models[0];
             save(); fillModels();
-            status('ifimgen_model_status', `${models.length} models. Selected one is the default.`, 'ok');
+            status('ifimgen_model_status', `${models.length} model(s) available.`, 'ok');
         } catch (e) { status('ifimgen_model_status', e.message, 'error'); }
     });
+    $('ifimgen_save_profile').addEventListener('click', () => {
+        if (!editingModel) return;
+        c.profiles[viewing] ??= {};
+        c.profiles[viewing][editingModel] = readParams();
+        save(); fillModels();
+        status('ifimgen_model_status', `Profile saved for ${editingModel}.`, 'ok');
+    });
+    $('ifimgen_set_default').addEventListener('click', () => {
+        if (!editingModel) return;
+        c[viewing].model = editingModel;
+        if (!hasProfile(settings, viewing, editingModel)) { c.profiles[viewing] ??= {}; c.profiles[viewing][editingModel] = readParams(); }
+        save(); fillModels();
+        status('ifimgen_model_status', `${editingModel} is now the default model for ${BACKENDS.find(b => b.id === viewing).label}.`, 'ok');
+    });
+    renderBackendTabs();
 
+    // ---- Box 3: LLM
     const l = c.llm;
     const showLlm = () => root.querySelectorAll('[data-llm]').forEach(b => b.style.display = b.dataset.llm === l.mode ? '' : 'none');
     bind('ifimgen_llm_mode', () => l.mode, v => { l.mode = v; showLlm(); });
@@ -84,7 +156,7 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
         catch (e) { status('ifimgen_llm_status', e.message, 'error'); }
     });
 
-    // ---- Generate tab
+    // ============================================================ Generate
     const g = settings.generate;
     bind('ifimgen_enabled', () => settings.enabled, v => settings.enabled = v);
     bind('ifimgen_auto', () => g.auto, v => g.auto = v);
@@ -96,6 +168,13 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
     bind('ifimgen_negative', () => g.negative, v => g.negative = v);
     bind('ifimgen_minchars', () => g.minParagraphChars, v => g.minParagraphChars = v);
     for (const k of ['steps', 'cfg', 'width', 'height']) bind(`ifimgen_ov_${k}`, () => g.overrides[k], v => g.overrides[k] = v);
+    const frameRow = (chk, row, key) => {
+        const apply = () => root.querySelector(row).classList.toggle('off', !g[key]);
+        bind(chk, () => g[key], v => { g[key] = v; apply(); });
+        apply();
+    };
+    frameRow('ifimgen_use_quality', '#ifimgen_quality_row', 'useQualityPrefix');
+    frameRow('ifimgen_use_negative', '#ifimgen_negative_row', 'useNegative');
 
     const presetSel = $('ifimgen_preset');
     const presetText = $('ifimgen_preset_text');
@@ -144,7 +223,7 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
         catch (e) { status('ifimgen_gen_status', e.message, 'error'); }
     });
 
-    // ---- Entity tabs
+    // ============================================================ Entities
     for (const t of ENTITY_TABS) mountEntityTab(t);
 
     function mountEntityTab({ kind, tab }) {
@@ -158,7 +237,12 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
             const sel = q('.ent-select');
             fillSelect(sel, list().map(e => ({ value: e.id, label: e.name || '(unnamed)' })), currentId, list().length ? null : '-- none --');
             q('.ent-count').textContent = `${list().length} saved`;
-            const def = q('.ent-default'); if (def) def.textContent = settings.defaultStyleId === currentId && currentId ? 'Default ✓' : 'Set as default';
+            const def = q('.ent-default');
+            if (def) {
+                const isDef = settings.defaultStyleId === currentId && currentId;
+                def.classList.toggle('active', Boolean(isDef));
+                def.querySelector('span').textContent = isDef ? 'Default ✓' : 'Set default';
+            }
         }
         function load(e) {
             e ??= createEntity(kind);
@@ -178,7 +262,7 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
         }
         function read() {
             const base = list().find(e => e.id === currentId);
-            const e = createEntity(kind, {
+            return createEntity(kind, {
                 id: base?.id, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
                 aliases: q('.ent-aliases').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value,
                 negative: q('.ent-negative').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
@@ -188,7 +272,6 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
                     personas: [...panel.querySelectorAll('[data-bind="personas"]:checked')].map(x => x.value),
                 },
             });
-            return e;
         }
         q('.ent-select').addEventListener('change', e => { currentId = e.target.value; load(list().find(x => x.id === currentId)); refreshList(); });
         q('.ent-new').addEventListener('click', () => { currentId = null; load(null); refreshList(); });
@@ -219,7 +302,10 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
         load(list().find(x => x.id === currentId)); refreshList();
     }
 
-    return { refresh() { fillModels(); fillPresets(); } };
+    // ============================================================ Gallery
+    const gallery = mountGallery({ panel: root.querySelector('[data-panel="gallery"]'), getContext });
+
+    return { refresh() { fillModels(); fillPresets(); gallery.refresh(); }, refreshGallery: () => gallery.refresh() };
 }
 
 function fillSelect(sel, items, value, emptyLabel = null) {
@@ -233,81 +319,93 @@ function numRow(id, label, min, max, step = 1) {
     return `<div class="ifimgen-row"><label for="${id}">${label}</label><input id="${id}" type="number" class="text_pole" min="${min}" max="${max}" step="${step}"></div>`;
 }
 
-function entityPanel({ kind, tab, label, hint }) {
+const boxTitle = (icon, text, extra = '') => `<div class="ifimgen-box-title">${ICONS[icon]} ${text}${extra}</div>`;
+
+function entityPanel({ kind, tab, label, icon, hint }) {
     const isStyle = kind === 'styles';
     return `
     <div class="ifimgen-panel" data-panel="${tab}">
-        <div class="ifimgen-row"><select class="text_pole ent-select"></select><button class="menu_button ent-new">New</button><span class="ifimgen-note ent-count"></span></div>
-        <div class="ifimgen-note">${hint}</div>
-        <h4>Identity</h4>
-        <div class="ifimgen-row"><label>Name</label><input class="text_pole ent-name" type="text"></div>
-        <div class="ifimgen-row"><label>Keyword ($)</label><input class="text_pole ent-keyword" type="text" placeholder="lyna → $lyna"></div>
-        <div class="ifimgen-row"><label>Aliases</label><input class="text_pole ent-aliases" type="text" placeholder="comma separated"></div>
-        <h4>Prompt fragments</h4>
-        <div class="ifimgen-row"><label>Tags (danbooru)</label><textarea class="text_pole ent-tags"></textarea></div>
-        <div class="ifimgen-row"><label>Natural description</label><textarea class="text_pole ent-natural"></textarea></div>
-        <div class="ifimgen-row"><label>Negative</label><input class="text_pole ent-negative" type="text"></div>
-        <h4>LoRA</h4>
-        <div class="ifimgen-row"><label>LoRA lines</label><textarea class="text_pole ent-loras" placeholder="&lt;lora:name:0.8&gt; one per line"></textarea></div>
-        <div class="ifimgen-row"><label>LoRA position</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>
-        <h4>Bind</h4>
-        <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-always"> Always active (every chat)</label></div>
-        <div class="ifimgen-row"><label>ST characters</label><div class="ifimgen-bind ent-bind-chars"></div></div>
-        <div class="ifimgen-row"><label>ST personas</label><div class="ifimgen-bind ent-bind-personas"></div></div>
+        <div class="ifimgen-box">
+            ${boxTitle(icon, label, '<span class="ifimgen-chip ent-count"></span>')}
+            <div class="ifimgen-row"><select class="text_pole ent-select"></select>${btn({ cls: 'ent-new', icon: 'plus', label: 'New' })}</div>
+            <div class="ifimgen-note">${hint}</div>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('user', 'Identity')}
+            <div class="ifimgen-row"><label>Name</label><input class="text_pole ent-name" type="text"></div>
+            <div class="ifimgen-row"><label>Keyword ($)</label><input class="text_pole ent-keyword" type="text" placeholder="lyna → $lyna"></div>
+            <div class="ifimgen-row"><label>Aliases</label><input class="text_pole ent-aliases" type="text" placeholder="comma separated"></div>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('sparkles', 'Prompt fragments')}
+            <div class="ifimgen-row"><label>Tags (danbooru)</label><textarea class="text_pole ent-tags"></textarea></div>
+            <div class="ifimgen-row"><label>Natural description</label><textarea class="text_pole ent-natural"></textarea></div>
+            <div class="ifimgen-row"><label>Negative</label><input class="text_pole ent-negative" type="text"></div>
+            <div class="ifimgen-row"><label>LoRA lines</label><textarea class="text_pole ent-loras" placeholder="&lt;lora:name:0.8&gt; one per line"></textarea></div>
+            <div class="ifimgen-row"><label>LoRA position</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('plug', 'Bind')}
+            <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-always"> Always active (every chat)</label></div>
+            <div class="ifimgen-row"><label>ST characters</label><div class="ifimgen-bind ent-bind-chars"></div></div>
+            <div class="ifimgen-row"><label>ST personas</label><div class="ifimgen-bind ent-bind-personas"></div></div>
+        </div>
         <div class="ifimgen-row">
-            <button class="menu_button ent-save">Save</button>
-            <button class="menu_button ent-delete">Delete</button>
-            ${isStyle ? '<button class="menu_button ent-default">Set as default</button>' : ''}
-            <button class="menu_button ent-export">Export JSON</button>
-            <label class="menu_button">Import <input type="file" class="ent-import" accept=".json" hidden></label>
-            <select class="text_pole ent-import-mode" style="flex:0 0 auto"><option value="merge">merge</option><option value="replace">replace</option></select>
+            ${btn({ cls: 'ent-save primary', icon: 'save', label: 'Save' })}
+            ${isStyle ? btn({ cls: 'ent-default', icon: 'star', label: 'Set default' }) : ''}
+            ${btn({ cls: 'ent-delete danger', icon: 'trash', title: 'Delete' })}
+            ${btn({ cls: 'ent-export', icon: 'download', title: 'Export JSON' })}
+            ${fileBtn({ inputCls: 'ent-import', title: 'Import JSON' })}
+            <select class="text_pole ent-import-mode" style="flex:0 0 auto;height:32px;margin:0"><option value="merge">merge</option><option value="replace">replace</option></select>
         </div>
         <div class="ifimgen-status ent-status"></div>
     </div>`;
 }
 
-function markup(version) {
+function settingsPanel() {
     return `
-    <div class="ifimgen">
-        <div class="ifimgen-title"><h3>IF Imgen</h3><small>v${escapeHtml(version)}</small></div>
-        <div class="ifimgen-tabs">
-            <button class="menu_button active" data-tab="settings">Settings</button>
-            <button class="menu_button" data-tab="generate">Generate</button>
-            ${ENTITY_TABS.map(t => `<button class="menu_button" data-tab="${t.tab}">${t.label}</button>`).join('')}
-        </div>
-
-        <div class="ifimgen-panel active" data-panel="settings">
-            <h4>1 · Image API</h4>
-            <div class="ifimgen-row"><label for="ifimgen_backend">Backend</label>
-                <select id="ifimgen_backend" class="text_pole"><option value="sd">A1111-compatible (Comfy proxy / Forge / WebUI)</option><option value="nai">NovelAI</option></select></div>
+    <div class="ifimgen-panel active" data-panel="settings">
+        <div class="ifimgen-box">
+            ${boxTitle('plug', '1 · Image API')}
+            <div class="ifimgen-subtabs">
+                ${BACKENDS.map(b => `<div class="ifimgen-subtab" data-be="${b.id}"><span class="ifimgen-dot"></span>${ICONS[b.icon]} ${b.label}</div>`).join('')}
+            </div>
             <div data-backend="sd">
                 <div class="ifimgen-row"><label for="ifimgen_sd_url">URL</label><input id="ifimgen_sd_url" class="text_pole" type="text" placeholder="http://127.0.0.1:7861"></div>
                 <div class="ifimgen-row"><label for="ifimgen_sd_auth">Auth user:pass</label><input id="ifimgen_sd_auth" class="text_pole" type="password" autocomplete="off"></div>
-                <div class="ifimgen-note">Requests go through SillyTavern's own /api/sd proxy, so the endpoint needs no CORS.</div>
-                <div class="ifimgen-grid2">
-                    <div class="ifimgen-row"><label>Sampler</label><input id="ifimgen_sd_sampler" class="text_pole" type="text"></div>
-                    <div class="ifimgen-row"><label>Scheduler</label><input id="ifimgen_sd_scheduler" class="text_pole" type="text"></div>
-                    ${numRow('ifimgen_sd_steps', 'Steps', 1, 150)}${numRow('ifimgen_sd_cfg', 'CFG', 1, 30, 0.5)}
-                    ${numRow('ifimgen_sd_width', 'Width', 256, 2048, 64)}${numRow('ifimgen_sd_height', 'Height', 256, 2048, 64)}
-                </div>
+                <div class="ifimgen-note">A1111-compatible endpoint (Comfy proxy / Forge / WebUI). Requests go through SillyTavern's /api/sd proxy, so no CORS needed.</div>
             </div>
             <div data-backend="nai" style="display:none">
                 <div class="ifimgen-row"><label for="ifimgen_nai_key">API key (pst-…)</label><input id="ifimgen_nai_key" class="text_pole" type="password" autocomplete="off"></div>
-                <div class="ifimgen-grid2">
-                    <div class="ifimgen-row"><label>Sampler</label><select id="ifimgen_nai_sampler" class="text_pole"></select></div>
-                    <div class="ifimgen-row"><label>Scheduler</label><select id="ifimgen_nai_scheduler" class="text_pole"></select></div>
-                    ${numRow('ifimgen_nai_steps', 'Steps', 1, 50)}${numRow('ifimgen_nai_cfg', 'CFG', 1, 10, 0.5)}
-                    ${numRow('ifimgen_nai_width', 'Width', 512, 1600, 64)}${numRow('ifimgen_nai_height', 'Height', 512, 1600, 64)}
-                </div>
                 <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_nai_variety" type="checkbox"> Variety+</label></div>
             </div>
-            <div class="ifimgen-row"><button id="ifimgen_test" class="menu_button">Test connection</button><span id="ifimgen_conn_status" class="ifimgen-status"></span></div>
+            <div class="ifimgen-row">
+                ${btn({ id: 'ifimgen_activate', icon: 'power', label: 'Set active' })}
+                ${btn({ id: 'ifimgen_test', icon: 'plug', label: 'Test' })}
+                <span id="ifimgen_conn_status" class="ifimgen-status"></span>
+            </div>
+        </div>
 
-            <h4>2 · Default model <span id="ifimgen_model_badge" class="ifimgen-chip active" style="display:none">default</span></h4>
-            <div class="ifimgen-row"><button id="ifimgen_fetch_models" class="menu_button">Fetch models</button><select id="ifimgen_model" class="text_pole"></select></div>
+        <div class="ifimgen-box">
+            ${boxTitle('box', '2 · Model — <span id="ifimgen_model_be"></span>', '<span id="ifimgen_model_badge" class="ifimgen-chip active" style="display:none">default</span>')}
+            <div class="ifimgen-row">${btn({ id: 'ifimgen_fetch_models', icon: 'refresh', title: 'Fetch models' })}<select id="ifimgen_model" class="text_pole"></select></div>
+            <div class="ifimgen-grid2">
+                <div class="ifimgen-row"><label>Sampler</label><input id="ifimgen_p_sampler_sd" class="text_pole" type="text"><select id="ifimgen_p_sampler_nai" class="text_pole" style="display:none"></select></div>
+                <div class="ifimgen-row"><label>Scheduler</label><input id="ifimgen_p_scheduler_sd" class="text_pole" type="text"><select id="ifimgen_p_scheduler_nai" class="text_pole" style="display:none"></select></div>
+                ${numRow('ifimgen_p_steps', 'Steps', 1, 150)}${numRow('ifimgen_p_cfg', 'CFG', 0, 30, 0.5)}
+                ${numRow('ifimgen_p_width', 'Width', 256, 2048, 64)}${numRow('ifimgen_p_height', 'Height', 256, 2048, 64)}
+            </div>
+            <div class="ifimgen-row">
+                ${btn({ id: 'ifimgen_save_profile', cls: 'primary', icon: 'save', label: 'Save profile' })}
+                ${btn({ id: 'ifimgen_set_default', icon: 'star', label: 'Set default' })}
+                <span id="ifimgen_profile_badge" class="ifimgen-chip"></span>
+            </div>
             <div id="ifimgen_model_status" class="ifimgen-status"></div>
+            <div class="ifimgen-note">Each model keeps its own sampler/steps/CFG/size profile. ★ = default model used for generation.</div>
+        </div>
 
-            <h4>3 · LLM (planner)</h4>
+        <div class="ifimgen-box">
+            ${boxTitle('brain', '3 · LLM (planner)')}
             <div class="ifimgen-row"><label for="ifimgen_llm_mode">Source</label>
                 <select id="ifimgen_llm_mode" class="text_pole"><option value="st_profile">SillyTavern connection profile</option><option value="custom">Custom OpenAI-compatible</option></select></div>
             <div data-llm="st_profile" class="ifimgen-row"><label>Profile</label><select id="ifimgen_llm_profile" class="text_pole"></select></div>
@@ -317,10 +415,16 @@ function markup(version) {
                 <div class="ifimgen-row"><label>Model</label><input id="ifimgen_llm_model" class="text_pole" type="text"></div>
             </div>
             ${numRow('ifimgen_llm_maxtokens', 'Max tokens', 200, 8000, 100)}
-            <div class="ifimgen-row"><button id="ifimgen_llm_test" class="menu_button">Test LLM</button><span id="ifimgen_llm_status" class="ifimgen-status"></span></div>
+            <div class="ifimgen-row">${btn({ id: 'ifimgen_llm_test', icon: 'plug', label: 'Test LLM' })}<span id="ifimgen_llm_status" class="ifimgen-status"></span></div>
         </div>
+    </div>`;
+}
 
-        <div class="ifimgen-panel" data-panel="generate">
+function generatePanel() {
+    return `
+    <div class="ifimgen-panel" data-panel="generate">
+        <div class="ifimgen-box">
+            ${boxTitle('power', 'Behaviour')}
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_enabled" type="checkbox"> Extension enabled</label></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_auto" type="checkbox"> Auto-generate on every character reply</label></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_show_button" type="checkbox"> Show per-message button</label></div>
@@ -330,21 +434,39 @@ function markup(version) {
                 <div class="ifimgen-row"><label for="ifimgen_dialect">Prompt dialect</label><select id="ifimgen_dialect" class="text_pole"><option value="tags">Tags (danbooru)</option><option value="natural">Natural language</option></select></div>
             </div>
             <div class="ifimgen-note">The planner reads the reply as numbered paragraphs and places each image right after the paragraph it illustrates.</div>
-            <h4>Planner preset</h4>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('brain', 'Planner preset')}
             <div class="ifimgen-row"><select id="ifimgen_preset" class="text_pole"></select>
-                <button id="ifimgen_preset_saveas" class="menu_button">Save as…</button><button id="ifimgen_preset_delete" class="menu_button">Delete</button>
-                <button id="ifimgen_preset_export" class="menu_button">Export</button>
-                <label class="menu_button">Import <input id="ifimgen_preset_import" type="file" accept=".json" hidden></label></div>
+                ${btn({ id: 'ifimgen_preset_saveas', icon: 'save', title: 'Save as…' })}
+                ${btn({ id: 'ifimgen_preset_delete', cls: 'danger', icon: 'trash', title: 'Delete preset' })}
+                ${btn({ id: 'ifimgen_preset_export', icon: 'download', title: 'Export presets' })}
+                ${fileBtn({ inputId: 'ifimgen_preset_import', title: 'Import presets' })}</div>
             <textarea id="ifimgen_preset_text" class="text_pole" rows="8"></textarea>
             <div class="ifimgen-note">Built-in (★) presets are read-only — use “Save as…” to fork. Placeholders: {{count}}, {{dialect_rule}}.</div>
-            <h4>Prompt frame</h4>
-            <div class="ifimgen-row"><label>Quality prefix</label><input id="ifimgen_quality" class="text_pole" type="text"></div>
-            <div class="ifimgen-row"><label>Negative</label><textarea id="ifimgen_negative" class="text_pole"></textarea></div>
-            <h4>Overrides (0 = inherit from Settings)</h4>
-            <div class="ifimgen-grid2">${numRow('ifimgen_ov_steps', 'Steps', 0, 150)}${numRow('ifimgen_ov_cfg', 'CFG', 0, 30, 0.5)}${numRow('ifimgen_ov_width', 'Width', 0, 2048, 64)}${numRow('ifimgen_ov_height', 'Height', 0, 2048, 64)}</div>
-            <div class="ifimgen-row"><button id="ifimgen_run_last" class="menu_button">Generate for last reply now</button><span id="ifimgen_gen_status" class="ifimgen-status"></span></div>
         </div>
+        <div class="ifimgen-box">
+            ${boxTitle('sparkles', 'Prompt frame')}
+            <div class="ifimgen-row" id="ifimgen_quality_row"><label class="ifimgen-toggle"><input id="ifimgen_use_quality" type="checkbox"> Quality prefix</label><input id="ifimgen_quality" class="text_pole" type="text"></div>
+            <div class="ifimgen-row" id="ifimgen_negative_row"><label class="ifimgen-toggle"><input id="ifimgen_use_negative" type="checkbox"> Negative</label><textarea id="ifimgen_negative" class="text_pole"></textarea></div>
+            <div class="ifimgen-note">Untick Negative for models that ignore it (e.g. Krea); entity negatives are skipped as well.</div>
+            <h4>Overrides (0 = use model profile)</h4>
+            <div class="ifimgen-grid2">${numRow('ifimgen_ov_steps', 'Steps', 0, 150)}${numRow('ifimgen_ov_cfg', 'CFG', 0, 30, 0.5)}${numRow('ifimgen_ov_width', 'Width', 0, 2048, 64)}${numRow('ifimgen_ov_height', 'Height', 0, 2048, 64)}</div>
+        </div>
+        <div class="ifimgen-row">${btn({ id: 'ifimgen_run_last', cls: 'primary', icon: 'play', label: 'Generate for last reply' })}<span id="ifimgen_gen_status" class="ifimgen-status"></span></div>
+    </div>`;
+}
 
+function markup(version) {
+    return `
+    <div class="ifimgen">
+        <div class="ifimgen-title"><h3>IF Imgen</h3><small>v${escapeHtml(version)}</small></div>
+        <div class="ifimgen-tabs">
+            ${MAIN_TABS.map((t, i) => btn({ cls: i === 0 ? 'active' : '', icon: t.icon, label: t.label, attrs: `data-tab="${t.tab}"` })).join('')}
+        </div>
+        ${settingsPanel()}
         ${ENTITY_TABS.map(entityPanel).join('')}
+        ${galleryMarkup()}
+        ${generatePanel()}
     </div>`;
 }

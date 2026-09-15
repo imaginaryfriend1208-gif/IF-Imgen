@@ -12,7 +12,7 @@ import { createLlm } from './src/llm.js';
 import { createPipeline } from './src/pipeline.js';
 import { mountDrawer } from './src/ui.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);
@@ -26,7 +26,8 @@ async function saveImage(b64, charName) {
     return saveBase64AsFile(b64, safe, `ifimgen_${Date.now()}_${Math.floor(Math.random() * 1e4)}`, 'png');
 }
 
-const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, log: LOG });
+let drawer = null;
+const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, log: LOG, onChange: () => drawer?.refreshGallery() });
 
 // ---- per-message button
 function addMessageButton(messageId) {
@@ -71,7 +72,10 @@ eventSource.on(event_types.GENERATION_ENDED, async () => {
         if (r?.skipped && r.skipped !== 'already has images') LOG('skipped:', r.skipped);
     } catch (e) { toastr.error(e.message, 'IF Imgen'); }
 });
-eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); setTimeout(addAllButtons, 300); });
+eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); setTimeout(() => { addAllButtons(); drawer?.refreshGallery(); }, 300); });
+eventSource.on(event_types.MESSAGE_DELETED, () => drawer?.refreshGallery());
+eventSource.on(event_types.MESSAGE_EDITED, () => drawer?.refreshGallery());
+eventSource.on(event_types.MESSAGE_SWIPED, () => drawer?.refreshGallery());
 eventSource.on(event_types.MORE_MESSAGES_LOADED, addAllButtons);
 
 // ---- slash command
@@ -103,7 +107,7 @@ jQuery(async () => {
             <div class="inline-drawer-content" id="ifimgen_root"></div>
         </div>`;
     host.appendChild(wrap);
-    mountDrawer({ root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, version: VERSION });
+    drawer = mountDrawer({ root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, version: VERSION });
     addAllButtons();
     LOG(`v${VERSION} loaded (settings ns: ${MODULE})`);
 });
