@@ -59,6 +59,18 @@ export function joinTags(...parts) {
     return out.join(', ');
 }
 
+/** Compare dotted versions: 1 if a > b, -1 if a < b, 0 if equal ("0.10.0" > "0.9.1"; leading "v" ignored). */
+export function compareVersions(a, b) {
+    const parse = v => String(v ?? '').trim().replace(/^v/i, '').split('.').map(x => parseInt(x, 10) || 0);
+    const pa = parse(a), pb = parse(b);
+    const n = Math.max(pa.length, pb.length);
+    for (let i = 0; i < n; i++) {
+        const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+        if (d) return d > 0 ? 1 : -1;
+    }
+    return 0;
+}
+
 export function escapeRegex(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

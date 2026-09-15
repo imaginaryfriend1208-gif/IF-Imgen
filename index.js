@@ -13,8 +13,12 @@ import { createPipeline } from './src/pipeline.js';
 import { mountDrawer } from './src/ui.js';
 import { createViewer, collectChatImages } from './src/gallery.js';
 import { t, setLang } from './src/i18n.js';
+import { compareVersions } from './src/util.js';
 
-const VERSION = '0.8.1';
+const VERSION = '0.9.0';
+const REPO_URL = 'https://github.com/imaginaryfriend1208-gif/IF-Imgen';
+const MANIFEST_URL = 'https://raw.githubusercontent.com/imaginaryfriend1208-gif/IF-Imgen/main/manifest.json';
+const DISCORD_URL = 'https://discord.gg/diuenmii';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);
@@ -56,6 +60,33 @@ function foldImages(messageId) {
 }
 function foldAll() { if (settings.generate.collapseImages) foldImages(); }
 document.body.classList.toggle('ifimgen-collapse', Boolean(settings.generate.collapseImages));
+
+// ---- alignment: body class drives where chat images (and their fold buttons) sit (Generate -> Behaviour).
+function applyAlign(v) {
+    const a = ['left', 'center', 'right'].includes(v) ? v : 'left';
+    document.body.classList.remove('ifimgen-align-left', 'ifimgen-align-center', 'ifimgen-align-right');
+    document.body.classList.add(`ifimgen-align-${a}`);
+}
+applyAlign(settings.generate.imageAlign);
+
+// ---- update check: compare manifest.json on GitHub with VERSION; header pill turns into a blinking "Update".
+let latestVersion = '';
+function paintUpdateBadge() {
+    const el = document.getElementById('ifimgen_hdr_ver');
+    if (!el) return;
+    const newer = latestVersion && compareVersions(latestVersion, VERSION) > 0;
+    el.classList.toggle('update', Boolean(newer));
+    el.textContent = newer ? t('hdr_update') : `v${VERSION}`;
+    el.title = newer ? t('hdr_update_title', { v: latestVersion }) : `IF Image v${VERSION}`;
+}
+async function checkUpdate() {
+    try {
+        const r = await fetch(`${MANIFEST_URL}?t=${Date.now()}`, { cache: 'no-store' });
+        if (!r.ok) return;
+        const m = await r.json();
+        if (typeof m?.version === 'string') { latestVersion = m.version; paintUpdateBadge(); }
+    } catch { /* offline or blocked: keep showing the current version */ }
+}
 
 // Click an IF Imgen image inside the chat -> viewer with regenerate / edit / delete.
 document.addEventListener('click', e => {
@@ -144,16 +175,27 @@ jQuery(async () => {
     wrap.className = 'extension_container';
     wrap.innerHTML = `
         <div class="inline-drawer">
-            <div class="inline-drawer-toggle inline-drawer-header"><b>IF Imgen</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
+            <div class="inline-drawer-toggle inline-drawer-header">
+                <b>IF Image <span id="ifimgen_hdr_ver" class="ifimgen-hdr-ver">v${VERSION}</span></b>
+                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+            </div>
             <div class="inline-drawer-content" id="ifimgen_root"></div>
         </div>`;
     host.appendChild(wrap);
-    const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, version: VERSION };
-    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
+    // Version pill: when an update exists, clicking it opens GitHub without toggling the drawer.
+    wrap.querySelector('#ifimgen_hdr_ver').addEventListener('click', e => {
+        if (!e.currentTarget.classList.contains('update')) return;
+        e.preventDefault(); e.stopPropagation(); window.open(REPO_URL, '_blank', 'noopener');
+    });
+    const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, discordUrl: DISCORD_URL };
+    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
+    drawerDeps.onAlignChange = v => applyAlign(v);
     drawer = mountDrawer(drawerDeps);
     try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
     addAllButtons();
     foldAll();
     LOG(`v${VERSION} loaded (settings ns: ${MODULE})`);
+    checkUpdate();
+    setInterval(checkUpdate, 6 * 60 * 60 * 1000);
 });

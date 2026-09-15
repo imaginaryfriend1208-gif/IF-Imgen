@@ -43,8 +43,8 @@ export function mountDrawer(deps) {
     };
 }
 
-function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, version, onLanguageChange, onCollapseChange }, openTab) {
-    root.innerHTML = markup(version);
+function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, discordUrl, onLanguageChange, onCollapseChange, onAlignChange }, openTab) {
+    root.innerHTML = markup(discordUrl);
     const $ = id => root.querySelector(`#${id}`);
     const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; n.className = `ifimgen-status ${cls}`; };
 
@@ -192,6 +192,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_show_button', () => g.showButton, v => g.showButton = v);
     bind('ifimgen_collapse', () => g.collapseImages, v => { g.collapseImages = v; document.body.classList.toggle('ifimgen-collapse', v); onCollapseChange?.(v); });
     document.body.classList.toggle('ifimgen-collapse', Boolean(g.collapseImages));
+    bind('ifimgen_align', () => g.imageAlign, v => { g.imageAlign = v; onAlignChange?.(v); });
     bind('ifimgen_count', () => g.imagesPerResponse, v => g.imagesPerResponse = v);
     bind('ifimgen_ctx', () => g.contextMessages, v => g.contextMessages = v);
     bind('ifimgen_dialect', () => g.dialect, v => g.dialect = v);
@@ -573,6 +574,7 @@ function generatePanel() {
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_auto" type="checkbox"> ${t('lbl_auto')}</label></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_show_button" type="checkbox"> ${t('lbl_show_button')}</label></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_collapse" type="checkbox"> ${t('lbl_collapse')}</label></div>
+            <div class="ifimgen-row"><label for="ifimgen_align">${t('lbl_align')}</label><select id="ifimgen_align" class="text_pole"><option value="left">${t('opt_align_left')}</option><option value="center">${t('opt_align_center')}</option><option value="right">${t('opt_align_right')}</option></select></div>
             <div class="ifimgen-grid2">
                 ${numRow('ifimgen_count', t('lbl_count'), 1, 8)}${numRow('ifimgen_ctx', t('lbl_ctx'), 0, 20)}
                 ${numRow('ifimgen_minchars', t('lbl_minchars'), 0, 500)}
@@ -664,11 +666,12 @@ function langSwitch() {
     </div>`;
 }
 
-function markup(version) {
+function markup(discordUrl) {
     const tabs = MAIN_TABS();
+    // Name + version live in the drawer header (index.js). The inner title row holds the Discord contact and the language switch.
     return `
     <div class="ifimgen">
-        <div class="ifimgen-title"><h3>IF Imgen</h3><small>v${escapeHtml(version)}</small>${langSwitch()}</div>
+        <div class="ifimgen-title"><a class="ifimgen-btn ifimgen-discord" href="${escapeHtml(discordUrl)}" target="_blank" rel="noopener" title="${escapeHtml(t('btn_discord_title'))}">${ICONS.discord}<span>${t('btn_discord')}</span></a>${langSwitch()}</div>
         <div class="ifimgen-tabs">
             ${tabs.map(tab => btn({ icon: tab.icon, label: tab.label, attrs: `data-tab="${tab.tab}"` })).join('')}
         </div>

@@ -5,9 +5,19 @@
     --ifg-text: var(--SmartThemeBodyColor, #e6e6e6);
     display: flex; flex-direction: column; gap: 10px;
 }
-.ifimgen-title { display: flex; align-items: baseline; gap: 8px; }
-.ifimgen-title h3 { margin: 0; }
-.ifimgen-title small { opacity: .6; }
+.ifimgen-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.ifimgen-title .ifimgen-lang { margin-left: auto; }
+.ifimgen-discord { text-decoration: none; background: #5865F2; color: #fff; border-color: transparent; font-weight: 600; }
+.ifimgen-discord:hover { filter: brightness(1.12); color: #fff; }
+
+/* ---- drawer header: version pill; turns into a blinking "Update" when GitHub has a newer manifest */
+.ifimgen-hdr-ver {
+    display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; vertical-align: middle;
+    font-size: .72em; font-weight: 500; line-height: 1.5; opacity: .7;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .25)); background: rgba(0, 0, 0, .2);
+}
+.ifimgen-hdr-ver.update { opacity: 1; font-weight: 700; color: #fff; background: #f7768e; border-color: #f7768e; cursor: pointer; animation: ifimgen-blink 1.2s ease-in-out infinite; }
+@keyframes ifimgen-blink { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 
 /* ---- buttons: fixed size, SVG icon, high-contrast press state */
 .ifimgen-ico { width: 16px; height: 16px; flex: 0 0 16px; pointer-events: none; }
@@ -93,9 +103,9 @@
 .ifimgen-thumb:hover img { transform: scale(1.07); }
 .ifimgen-thumb:hover { border-color: var(--ifg-accent); }
 .ifimgen-thumb figcaption { position: absolute; left: 0; right: 0; bottom: 0; font-size: .7em; padding: 1px 5px; background: rgba(0, 0, 0, .65); color: #fff; }
-.ifimgen-lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .9); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; }
+.ifimgen-lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .9); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
 .ifimgen-lightbox img { max-width: 95vw; max-height: 76vh; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 40px rgba(0, 0, 0, .6); }
-.ifimgen-lightbox-cap { max-width: 90vw; max-height: 12vh; overflow: auto; font-size: .85em; color: #ddd; text-align: center; white-space: pre-wrap; }
+.ifimgen-lightbox-cap { max-width: 90vw; max-height: 12vh; overflow: auto; font-size: .85em; color: #ddd; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; box-sizing: border-box; }
 .ifimgen-lightbox-bar { display: flex; gap: 6px; }
 .ifimgen-lightbox .ifimgen-btn { background: rgba(255, 255, 255, .12); color: #fff; border-color: rgba(255, 255, 255, .3); }
 #chat .mes.ifimgen-flash { outline: 2px solid var(--SmartThemeQuoteColor, #7aa2f7); outline-offset: -2px; transition: outline-color 1.2s; }
@@ -103,6 +113,11 @@
 /* ---- chat */
 .ifimgen_msg_btn.fa-hourglass { opacity: .7; }
 .mes_text img[alt="IF Imgen"] { max-width: 100%; border-radius: 6px; margin: 4px 0; display: block; }
+/* alignment (Generate -> Behaviour): the body class moves both the image and its fold button */
+body.ifimgen-align-center .mes_text img[alt="IF Imgen"] { margin-left: auto; margin-right: auto; }
+body.ifimgen-align-right .mes_text img[alt="IF Imgen"] { margin-left: auto; margin-right: 0; }
+body.ifimgen-align-center .ifimgen-fold { text-align: center; }
+body.ifimgen-align-right .ifimgen-fold { text-align: right; }
 
 @media (max-width: 768px) {
     .ifimgen-grid2 { grid-template-columns: 1fr; }
@@ -168,3 +183,19 @@
 /* setting off -> folds behave like plain images */
 body:not(.ifimgen-collapse) .ifimgen-fold-btn { display: none; }
 body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
+
+/* ---- viewer on phones: top-anchored scrolling column, nothing clipped, prompt wraps inside the screen */
+@media (max-width: 768px) {
+    .ifimgen-lightbox {
+        justify-content: flex-start; gap: 8px;
+        height: 100dvh; width: 100vw;
+        padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(14px + env(safe-area-inset-bottom, 0px));
+    }
+    .ifimgen-lightbox img { max-width: 100%; max-height: 52dvh; width: auto; height: auto; flex: 0 0 auto; }
+    .ifimgen-lightbox-cap { width: 100%; max-width: 100%; max-height: none; overflow: visible; font-size: .8em; flex: 0 0 auto; }
+    .ifimgen-lightbox-status { width: 100%; text-align: center; font-size: .85em; }
+    .ifimgen-lightbox-bar { width: 100%; gap: 6px; flex: 0 0 auto; padding-bottom: 4px; }
+    .ifimgen-lightbox-bar .ifimgen-btn { min-width: 0; flex: 1 1 auto; height: 38px; }
+    .ifimgen-lightbox-bar .ifimgen-btn.icon { flex: 0 0 38px; width: 38px; }
+    .ifimgen-title .ifimgen-discord { flex: 1 1 auto; }
+}

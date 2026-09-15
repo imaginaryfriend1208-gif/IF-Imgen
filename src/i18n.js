@@ -29,6 +29,8 @@ const en = {
     tab_settings: 'Settings', tab_chars: 'Characters', tab_personas: 'Personas', tab_styles: 'Styles',
     tab_gallery: 'Gallery', tab_help: 'How to use', tab_generate: 'Generate',
     lang_title: 'Language',
+    hdr_update: 'Update', hdr_update_title: 'A newer IF Image (v{v}) is on GitHub. Click to open. Update via Extensions → Manage extensions → Update.',
+    btn_discord: 'Contact · Discord', btn_discord_title: 'Join the Discord server (diuenmii)',
 
     // ---- entity tabs
     hint_chars: 'Visual definitions written here are the ONLY source for the image prompt (nothing is read from the ST card). Bind = auto-load in a chat / card. Referenced in plan via $keyword.',
@@ -68,6 +70,7 @@ const en = {
     // ---- generate
     box_behaviour: 'Behaviour', lbl_enabled: 'Extension enabled', lbl_auto: 'Auto-generate on every character reply',
     lbl_show_button: 'Show per-message button', lbl_collapse: 'Collapse images in chat behind a small button',
+    lbl_align: 'Image alignment in chat', opt_align_left: 'Left', opt_align_center: 'Center', opt_align_right: 'Right',
     lbl_count: 'Images per response', lbl_ctx: 'Context messages', lbl_minchars: 'Min paragraph chars', lbl_dialect: 'Prompt dialect',
     opt_tags: 'Tags (danbooru)', opt_natural: 'Natural language',
     note_behaviour: 'The planner reads the reply as numbered paragraphs and places each image right after the paragraph it illustrates.',
@@ -137,6 +140,8 @@ const vi = {
     tab_settings: 'Cài đặt', tab_chars: 'Nhân vật', tab_personas: 'Persona', tab_styles: 'Style',
     tab_gallery: 'Thư viện', tab_help: 'Hướng dẫn', tab_generate: 'Tạo ảnh',
     lang_title: 'Ngôn ngữ',
+    hdr_update: 'Update', hdr_update_title: 'Đã có IF Image mới (v{v}) trên GitHub. Bấm để mở. Cập nhật qua Extensions → Manage extensions → Update.',
+    btn_discord: 'Liên hệ · Discord', btn_discord_title: 'Tham gia server Discord (diuenmii)',
 
     // ---- entity tabs
     hint_chars: 'Mô tả ngoại hình viết ở đây là nguồn DUY NHẤT cho prompt ảnh (không đọc gì từ card ST). Bind = tự nạp trong chat / card. Planner gọi bằng $keyword.',
@@ -176,6 +181,7 @@ const vi = {
     // ---- generate
     box_behaviour: 'Hành vi', lbl_enabled: 'Bật extension', lbl_auto: 'Tự tạo ảnh sau mỗi câu trả lời của nhân vật',
     lbl_show_button: 'Hiện nút trên từng tin nhắn', lbl_collapse: 'Thu gọn ảnh trong chat vào một nút nhỏ',
+    lbl_align: 'Căn lề ảnh trong chat', opt_align_left: 'Trái', opt_align_center: 'Giữa', opt_align_right: 'Phải',
     lbl_count: 'Số ảnh mỗi câu trả lời', lbl_ctx: 'Số tin nhắn ngữ cảnh', lbl_minchars: 'Độ dài đoạn tối thiểu', lbl_dialect: 'Kiểu prompt',
     opt_tags: 'Tags (danbooru)', opt_natural: 'Ngôn ngữ tự nhiên',
     note_behaviour: 'Planner đọc câu trả lời theo từng đoạn có đánh số và chèn ảnh ngay sau đoạn mà nó minh họa.',

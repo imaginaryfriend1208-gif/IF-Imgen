@@ -8,6 +8,7 @@ import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEn
 import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages } from '../src/gallery.js';
+import { compareVersions } from '../src/util.js';
 import { parseFacets, facetsText, expandScene, buildRefinePrompt, rosterLine } from '../src/scene.js';
 import { rosterText, isBound } from '../src/entities.js';
 
@@ -259,3 +260,11 @@ test('import/export roundtrip + keyword dedupe', () => {
 
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }
 console.log(`PASS (${passed} cases)`);
+
+test('compareVersions: numeric per segment, leading v ignored, missing segments are 0', () => {
+    assert.equal(compareVersions('0.10.0', '0.9.1'), 1);
+    assert.equal(compareVersions('v0.9.0', '0.9.0'), 0);
+    assert.equal(compareVersions('0.9', '0.9.1'), -1);
+    assert.equal(compareVersions('1.0.0', '0.99.99'), 1);
+    assert.equal(compareVersions('', '0.1.0'), -1);
+});

@@ -1,12 +1,12 @@
 {
-    "display_name": "IF Imgen",
+    "display_name": "IF Image",
     "loading_order": 100,
     "requires": [],
     "optional": ["connection-manager"],
     "js": "index.js",
     "css": "style.css",
     "author": "Diuen",
-    "version": "0.8.1",
+    "version": "0.9.0",
     "homePage": "",
     "auto_update": false
 }

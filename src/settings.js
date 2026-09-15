@@ -53,6 +53,7 @@ export function defaultSettings() {
             minParagraphChars: 40,
             showButton: true,
             collapseImages: true,       // chat images sit behind a small toggle button
+            imageAlign: 'left',         // 'left' | 'center' | 'right' - where generated images sit in the chat bubble
         },
         data: { characters: [], personas: [], styles: [], presets: [], testImages: [] },
         defaultStyleId: '',
