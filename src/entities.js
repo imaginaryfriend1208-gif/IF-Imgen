@@ -85,7 +85,7 @@ export function isBound(e, { chatId, charAvatar, personaAvatar } = {}) {
  * with no keywords still gets the current character). Bound entities that are NOT
  * mentioned are dropped when at least one keyword matched -- a two-person roster
  * must not be stamped onto a solo scene.
- * Style: bound style > keyword > defaultStyleId > none.
+ * Style: always the default style (settings.defaultStyleId), or none.
  */
 export function resolveEntities(settings, { text, chatId, charAvatar, personaAvatar }) {
     const d = settings.data;
@@ -95,10 +95,8 @@ export function resolveEntities(settings, { text, chatId, charAvatar, personaAva
     const bound = list => list.filter(e => isBound(e, { chatId, charAvatar, personaAvatar }));
     const characters = anyKeyword ? byKeyChars : bound(d.characters);
     const personas = anyKeyword ? byKeyPersonas : bound(d.personas);
-    const style = d.styles.find(e => isBound(e, { chatId, charAvatar, personaAvatar }))
-        ?? matchByKeyword(d.styles, text)[0]
-        ?? d.styles.find(e => e.id === settings.defaultStyleId)
-        ?? null;
+    // Styles have no keyword and no binding: the one marked default is applied to every image.
+    const style = d.styles.find(e => e.id === settings.defaultStyleId) ?? null;
     return { characters, personas, style };
 }
 

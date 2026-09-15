@@ -221,6 +221,19 @@ test('LLM isolation: raw request (no preset/instruct merge), no card fields read
     }
 });
 
+test('style: only the default style applies; keyword/binding on styles are ignored; missing default is auto-picked', () => {
+    const s3 = structuredClone(s);
+    const other = createEntity('styles', { name: 'Other', keyword: 'other', tags: 'oil painting', bind: { always: true } });
+    s3.data.styles.push(other);
+    const r = resolveEntities(s3, { text: '$other painting of $lyna', charAvatar: 'lyna.png' });
+    assert.equal(r.style.id, style.id, 'default wins over keyword and always-bound style');
+    s3.defaultStyleId = 'missing';
+    const fixed = ensureSettings({ IF_Imgen: s3 });
+    assert.equal(fixed.defaultStyleId, other.id, 'auto-pick prefers a legacy always-bound style');
+    fixed.data.styles.length = 0; fixed.defaultStyleId = '';
+    assert.equal(resolveEntities(fixed, { text: 'x' }).style, null);
+});
+
 test('import/export roundtrip + keyword dedupe', () => {
     const list = [];
     const r = importEntities('characters', list, exportEntities('characters', [lyna]));

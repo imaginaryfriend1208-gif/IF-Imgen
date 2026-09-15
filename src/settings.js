@@ -90,5 +90,11 @@ export function ensureSettings(extensionSettings) {
     fill(s, defaultSettings());
     if (hadVersion !== undefined) s.version = hadVersion; // fill() must not fake a migration
     migrate(s);
+    // Styles are applied by "default" only. If the default points nowhere but styles exist, pick one
+    // (prefer a legacy "always active" style) so existing setups keep their style.
+    const styles = s.data?.styles ?? [];
+    if (styles.length && !styles.some(x => x.id === s.defaultStyleId)) {
+        s.defaultStyleId = (styles.find(x => x.bind?.always) ?? styles[0]).id;
+    }
     return s;
 }

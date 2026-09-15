@@ -12,7 +12,7 @@ import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM } from './scene.js';
 const ENTITY_TABS = [
     { kind: 'characters', tab: 'chars', label: 'Characters', icon: 'users', hint: 'Visual definitions written here are the ONLY source for the image prompt (nothing is read from the ST card). Bind = auto-load in a chat / card. Referenced in plan via $keyword.' },
     { kind: 'personas', tab: 'personas', label: 'Personas', icon: 'user', hint: 'Your visual persona definitions. Bind = auto-load in a chat / card / ST persona; the ST persona description itself is never used.' },
-    { kind: 'styles', tab: 'styles', label: 'Styles', icon: 'palette', hint: 'One style per image: bound style > keyword > default.' },
+    { kind: 'styles', tab: 'styles', label: 'Styles', icon: 'palette', hint: 'A style profile is a fixed prompt frame (tags / description / negative / LoRA). The one marked ★ Default is applied to every image; nothing in the chat triggers it.' },
 ];
 // Tab order: configure everything first, Generate last.
 const MAIN_TABS = [
@@ -271,7 +271,7 @@ ${negative || '(disabled / empty)'}`;
 
         function refreshList() {
             const sel = q('.ent-select');
-            fillSelect(sel, list().map(e => ({ value: e.id, label: e.name || '(unnamed)' })), currentId, list().length ? null : '-- none --');
+            fillSelect(sel, list().map(e => ({ value: e.id, label: (isStyle && e.id === settings.defaultStyleId ? '★ ' : '') + (e.name || '(unnamed)') })), currentId, list().length ? null : '-- none --');
             q('.ent-count').textContent = `${list().length} saved`;
             const def = q('.ent-default');
             if (def) {
@@ -282,10 +282,12 @@ ${negative || '(disabled / empty)'}`;
         }
         function load(e) {
             e ??= createEntity(kind);
-            q('.ent-name').value = e.name; q('.ent-keyword').value = e.keyword; q('.ent-aliases').value = e.aliases.join(', ');
+            q('.ent-name').value = e.name;
             q('.ent-tags').value = e.tags; q('.ent-natural').value = e.natural; q('.ent-negative').value = e.negative;
-            if (q('.ent-facets')) q('.ent-facets').value = facetsText(e.facets);
             q('.ent-loras').value = e.loras.join('\n'); q('.ent-lorapos').value = e.loraPosition;
+            if (isStyle) return;
+            q('.ent-keyword').value = e.keyword; q('.ent-aliases').value = e.aliases.join(', ');
+            q('.ent-facets').value = facetsText(e.facets);
             q('.ent-always').checked = e.bind.always;
             renderBind(e);
         }
@@ -311,6 +313,7 @@ ${negative || '(disabled / empty)'}`;
             fillSelect(q('.ent-bind-char-select'), cards.filter(c => !bindState.characters.includes(c.id)).map(c => ({ value: c.id, label: c.name })), '', '-- all cards bound / none --');
             fillSelect(q('.ent-bind-persona-select'), pers.filter(p => !bindState.personas.includes(p.id)).map(p => ({ value: p.id, label: p.name })), '', '-- none --');
         }
+        if (!isStyle) {
         q('.ent-bind-chat-toggle').addEventListener('click', () => {
             const id = currentChatId(); if (!id) return;
             bindState.chats = bindState.chats.includes(id) ? bindState.chats.filter(x => x !== id) : [...bindState.chats, id];
@@ -322,12 +325,20 @@ ${negative || '(disabled / empty)'}`;
             const x = ev.target.closest('[data-unbind]'); if (!x) return;
             const key = x.dataset.unbind; bindState[key] = bindState[key].filter(id => id !== x.dataset.id); renderBind(null);
         });
+        }
         function read() {
             const base = list().find(e => e.id === currentId);
+            if (isStyle) {
+                return createEntity(kind, {
+                    id: base?.id, name: q('.ent-name').value, keyword: base?.keyword || q('.ent-name').value,
+                    tags: q('.ent-tags').value, natural: q('.ent-natural').value, negative: q('.ent-negative').value,
+                    loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
+                });
+            }
             return createEntity(kind, {
                 id: base?.id, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
                 aliases: q('.ent-aliases').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value,
-                negative: q('.ent-negative').value, facets: q('.ent-facets')?.value ?? '', loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
+                negative: q('.ent-negative').value, facets: q('.ent-facets').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
                 bind: { always: q('.ent-always').checked, chats: [...bindState.chats], characters: [...bindState.characters], personas: [...bindState.personas] },
             });
         }
@@ -336,15 +347,20 @@ ${negative || '(disabled / empty)'}`;
         q('.ent-save').addEventListener('click', () => {
             const e = read();
             if (!e.name) return setStatus('Name is required.', 'error');
-            const dup = list().find(x => x.keyword === e.keyword && x.id !== e.id);
-            if (dup) return setStatus(`Keyword "$${e.keyword}" already used by "${dup.name}".`, 'error');
-            upsertEntity(list(), e); currentId = e.id; save(); refreshList();
+            if (!isStyle) {
+                const dup = list().find(x => x.keyword === e.keyword && x.id !== e.id);
+                if (dup) return setStatus(`Keyword "${e.keyword}" already used by "${dup.name}".`, 'error');
+            }
+            upsertEntity(list(), e); currentId = e.id;
+            if (isStyle && !list().some(x => x.id === settings.defaultStyleId)) settings.defaultStyleId = e.id;
+            save(); refreshList();
             const empty = !e.tags && !e.natural && !e.loras.length;
-            setStatus(`Saved "${e.name}" as $${e.keyword}.${empty ? ' Warning: no tags / natural description / LoRA — this entry adds nothing to the prompt.' : ''}`, empty ? 'error' : 'ok');
+            const label = isStyle ? `Saved style "${e.name}"${settings.defaultStyleId === e.id ? ' (default)' : ''}.` : `Saved "${e.name}" as ${e.keyword}.`;
+            setStatus(`${label}${empty ? ' Warning: no tags / natural description / LoRA — this entry adds nothing to the prompt.' : ''}`, empty ? 'error' : 'ok');
         });
         q('.ent-delete').addEventListener('click', () => {
             if (!currentId) return;
-            removeEntity(list(), currentId); if (settings.defaultStyleId === currentId) settings.defaultStyleId = '';
+            removeEntity(list(), currentId); if (settings.defaultStyleId === currentId) settings.defaultStyleId = list()[0]?.id ?? '';
             currentId = list()[0]?.id ?? null; save(); load(list().find(x => x.id === currentId)); refreshList(); setStatus('Deleted.', 'ok');
         });
         q('.ent-export').addEventListener('click', () => downloadJson(`ifimgen-${kind}.json`, exportEntities(kind, list())));
@@ -357,7 +373,7 @@ ${negative || '(disabled / empty)'}`;
             } catch (e) { setStatus(e.message, 'error'); }
             ev.target.value = '';
         });
-        if (isStyle) q('.ent-default').addEventListener('click', () => { if (!currentId) return; settings.defaultStyleId = currentId; save(); refreshList(); });
+        if (isStyle) q('.ent-default').addEventListener('click', () => { if (!currentId) return setStatus('Save the style first.', 'error'); settings.defaultStyleId = currentId; save(); refreshList(); setStatus('This style is now the default for every image.', 'ok'); });
         const setStatus = (t, cls) => { const n = q('.ent-status'); n.textContent = t; n.className = `ifimgen-status ${cls}`; };
         load(list().find(x => x.id === currentId)); refreshList();
     }
@@ -383,6 +399,7 @@ const boxTitle = (icon, text, extra = '') => `<div class="ifimgen-box-title">${I
 
 function entityPanel({ kind, tab, label, icon, hint }) {
     const isStyle = kind === 'styles';
+    if (isStyle) return stylePanel({ tab, label, icon, hint });
     return `
     <div class="ifimgen-panel" data-panel="${tab}">
         <div class="ifimgen-box">
@@ -401,7 +418,7 @@ function entityPanel({ kind, tab, label, icon, hint }) {
             <div class="ifimgen-row"><label>Tags (danbooru)</label><textarea class="text_pole ent-tags"></textarea></div>
             <div class="ifimgen-row"><label>Natural description</label><textarea class="text_pole ent-natural"></textarea></div>
             <div class="ifimgen-row"><label>Negative</label><input class="text_pole ent-negative" type="text"></div>
-            ${isStyle ? '' : `<div class="ifimgen-row"><label>Details ($kw.key)</label><textarea class="text_pole ent-facets" rows="5" placeholder="one per line, key: description&#10;outfit: white button-up shirt, black skirt&#10;back: a big tattoo on the left shoulder blade&#10;nsfw: small breasts, pierced navel"></textarea></div>
+            ${`<div class="ifimgen-row"><label>Details ($kw.key)</label><textarea class="text_pole ent-facets" rows="5" placeholder="one per line, key: description&#10;outfit: white button-up shirt, black skirt&#10;back: a big tattoo on the left shoulder blade&#10;nsfw: small breasts, pierced navel"></textarea></div>
             <div class="ifimgen-note">Suggested keys: ${FACET_KEYS.join(', ')} (any lowercase key works). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).</div>`}
             <div class="ifimgen-row"><label>LoRA lines</label><textarea class="text_pole ent-loras" placeholder="&lt;lora:name:0.8&gt; one per line"></textarea></div>
             <div class="ifimgen-row"><label>LoRA position</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>
@@ -421,7 +438,6 @@ function entityPanel({ kind, tab, label, icon, hint }) {
         </div>
         <div class="ifimgen-row">
             ${btn({ cls: 'ent-save primary', icon: 'save', label: 'Save' })}
-            ${isStyle ? btn({ cls: 'ent-default', icon: 'star', label: 'Set default' }) : ''}
             ${btn({ cls: 'ent-delete danger', icon: 'trash', title: 'Delete' })}
             ${btn({ cls: 'ent-export', icon: 'download', title: 'Export JSON' })}
             ${fileBtn({ inputCls: 'ent-import', title: 'Import JSON' })}
@@ -556,5 +572,36 @@ function markup(version) {
         ${ENTITY_TABS.map(entityPanel).join('')}
         ${galleryMarkup()}
         ${generatePanel()}
+    </div>`;
+}
+
+/** Style tab: name + prompt frame + default. No keyword, no details, no binding. */
+function stylePanel({ tab, label, icon, hint }) {
+    return `
+    <div class="ifimgen-panel" data-panel="${tab}">
+        <div class="ifimgen-box">
+            ${boxTitle(icon, label, '<span class="ifimgen-chip ent-count"></span>')}
+            <div class="ifimgen-row"><select class="text_pole ent-select"></select>${btn({ cls: 'ent-new', icon: 'plus', label: 'New' })}</div>
+            <div class="ifimgen-note">${hint}</div>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('palette', 'Style profile')}
+            <div class="ifimgen-row"><label>Name</label><input class="text_pole ent-name" type="text" placeholder="e.g. Krea Niji"></div>
+            <div class="ifimgen-row"><label>Tags (danbooru)</label><textarea class="text_pole ent-tags" placeholder="anime style, flat color, clean lineart"></textarea></div>
+            <div class="ifimgen-row"><label>Natural description</label><textarea class="text_pole ent-natural" placeholder="soft anime illustration, pastel palette, clean lineart, cinematic lighting"></textarea></div>
+            <div class="ifimgen-row"><label>Negative</label><input class="text_pole ent-negative" type="text" placeholder="realistic, 3d, photo"></div>
+            <div class="ifimgen-row"><label>LoRA lines</label><textarea class="text_pole ent-loras" placeholder="&lt;lora:name:0.8&gt; one per line"></textarea></div>
+            <div class="ifimgen-row"><label>LoRA position</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>
+            <div class="ifimgen-note">Tags are used when Dialect = tags, Natural description when Dialect = natural (each falls back to the other). Refine mode hands the style line to the second LLM call.</div>
+        </div>
+        <div class="ifimgen-row">
+            ${btn({ cls: 'ent-save primary', icon: 'save', label: 'Save' })}
+            ${btn({ cls: 'ent-default', icon: 'star', label: 'Set default' })}
+            ${btn({ cls: 'ent-delete danger', icon: 'trash', title: 'Delete' })}
+            ${btn({ cls: 'ent-export', icon: 'download', title: 'Export JSON' })}
+            ${fileBtn({ inputCls: 'ent-import', title: 'Import JSON' })}
+            <select class="text_pole ent-import-mode" style="flex:0 0 auto;height:32px;margin:0"><option value="merge">merge</option><option value="replace">replace</option></select>
+        </div>
+        <div class="ifimgen-status ent-status"></div>
     </div>`;
 }
