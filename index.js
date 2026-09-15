@@ -12,12 +12,14 @@ import { createLlm } from './src/llm.js';
 import { createPipeline } from './src/pipeline.js';
 import { mountDrawer } from './src/ui.js';
 import { createViewer, collectChatImages } from './src/gallery.js';
+import { t, setLang } from './src/i18n.js';
 
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);
 const save = () => saveSettingsDebounced();
+setLang(settings.language);
 
 const backends = createBackends({ getRequestHeaders, settings });
 const llm = createLlm({ settings, getContext });
@@ -28,8 +30,32 @@ async function saveImage(b64, charName) {
 }
 
 let drawer = null;
-const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, log: LOG, onChange: () => drawer?.refreshGallery() });
+const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, save, log: LOG, onChange: id => { drawer?.refreshGallery(); if (settings.generate.collapseImages && typeof id === 'number' && id >= 0) setTimeout(() => foldImages(id), 50); } });
 const viewer = createViewer({ getContext, pipeline, onChanged: () => drawer?.refreshGallery() });
+
+// ---- collapse: each IF Imgen image in chat sits behind a small toggle button (Generate → Behaviour).
+function foldImages(messageId) {
+    const scope = messageId === undefined ? document : document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+    if (!scope) return;
+    scope.querySelectorAll('.mes_text img[alt="IF Imgen"]').forEach(img => {
+        if (img.closest('.ifimgen-fold')) return;
+        const fold = document.createElement('div');
+        fold.className = 'ifimgen-fold';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ifimgen-fold-btn';
+        b.title = t('chat_fold_title');
+        b.innerHTML = `<i class="fa-solid fa-image"></i><span>${t('chat_fold_btn')}</span><i class="fa-solid fa-chevron-down ifimgen-fold-chev"></i>`;
+        b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); fold.classList.toggle('open'); });
+        const body = document.createElement('div');
+        body.className = 'ifimgen-fold-body';
+        img.replaceWith(fold);
+        body.appendChild(img);
+        fold.append(b, body);
+    });
+}
+function foldAll() { if (settings.generate.collapseImages) foldImages(); }
+document.body.classList.toggle('ifimgen-collapse', Boolean(settings.generate.collapseImages));
 
 // Click an IF Imgen image inside the chat -> viewer with regenerate / edit / delete.
 document.addEventListener('click', e => {
@@ -74,6 +100,7 @@ function addAllButtons() {
 // ---- events
 eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, async (messageId) => {
     addMessageButton(messageId);
+    if (settings.generate.collapseImages) foldImages(messageId);
 });
 eventSource.on(event_types.GENERATION_ENDED, async () => {
     if (!settings.enabled || !settings.generate.auto) return;
@@ -86,11 +113,11 @@ eventSource.on(event_types.GENERATION_ENDED, async () => {
         if (r?.skipped && r.skipped !== 'already has images') LOG('skipped:', r.skipped);
     } catch (e) { toastr.error(e.message, 'IF Imgen'); }
 });
-eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); drawer?.refreshGallery(); }, 300); });
+eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); foldAll(); drawer?.refreshGallery(); }, 300); });
 eventSource.on(event_types.MESSAGE_DELETED, () => drawer?.refreshGallery());
-eventSource.on(event_types.MESSAGE_EDITED, () => drawer?.refreshGallery());
-eventSource.on(event_types.MESSAGE_SWIPED, () => drawer?.refreshGallery());
-eventSource.on(event_types.MORE_MESSAGES_LOADED, addAllButtons);
+eventSource.on(event_types.MESSAGE_EDITED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); });
+eventSource.on(event_types.MESSAGE_SWIPED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); });
+eventSource.on(event_types.MORE_MESSAGES_LOADED, () => { addAllButtons(); foldAll(); });
 
 // ---- slash command
 getContext().SlashCommandParser?.addCommandObject?.(getContext().SlashCommand.fromProps({
@@ -121,8 +148,12 @@ jQuery(async () => {
             <div class="inline-drawer-content" id="ifimgen_root"></div>
         </div>`;
     host.appendChild(wrap);
-    drawer = mountDrawer({ root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, version: VERSION });
+    const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, version: VERSION };
+    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
+    drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
+    drawer = mountDrawer(drawerDeps);
     try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
     addAllButtons();
+    foldAll();
     LOG(`v${VERSION} loaded (settings ns: ${MODULE})`);
 });

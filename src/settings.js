@@ -16,6 +16,7 @@ export function defaultSettings() {
     return {
         version: SETTINGS_VERSION,
         enabled: true,
+        language: 'en',        // UI language: 'en' | 'vi'
         connection: {
             backend: 'sd', // 'sd' | 'nai'  (the ACTIVE image API)
             sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [] },
@@ -51,8 +52,9 @@ export function defaultSettings() {
             overrides: { steps: 0, cfg: 0, width: 0, height: 0 }, // 0 = inherit from model profile
             minParagraphChars: 40,
             showButton: true,
+            collapseImages: true,       // chat images sit behind a small toggle button
         },
-        data: { characters: [], personas: [], styles: [], presets: [] },
+        data: { characters: [], personas: [], styles: [], presets: [], testImages: [] },
         defaultStyleId: '',
     };
 }
