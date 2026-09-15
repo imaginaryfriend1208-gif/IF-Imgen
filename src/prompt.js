@@ -22,7 +22,9 @@ export function stripKeywordTokens(scene, entities) {
 }
 
 /**
- * @param {{ scene:string, characters:object[], personas:object[], style:object|null, settings:object, backend:'sd'|'nai' }} a
+ * @param {{ scene:string, characters:object[], personas:object[], style:object|null, settings:object, backend:'sd'|'nai', merged?:boolean }} a
+ *   merged=true: `scene` already contains the cast (refine mode) -> character/persona fragments are NOT prepended;
+ *   their LoRAs and negatives still apply. Quality prefix and style are always handled here.
  * @returns {{ prompt:string, negative:string }}
  */
 export function compilePrompt(a) {
@@ -41,8 +43,8 @@ export function compilePrompt(a) {
         useQuality ? g.qualityPrefix : '',
         styleList.map(pick),
         lorasAt(all, 'after_style'),
-        a.characters.map(pick),
-        a.personas.map(pick),
+        a.merged ? [] : a.characters.map(pick),
+        a.merged ? [] : a.personas.map(pick),
         scene,
         lorasAt(all, 'end'),
     );

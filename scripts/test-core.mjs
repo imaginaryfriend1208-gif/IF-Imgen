@@ -7,6 +7,8 @@ import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEn
 import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages } from '../src/gallery.js';
+import { parseFacets, facetsText, expandScene, buildRefinePrompt, rosterLine } from '../src/scene.js';
+import { rosterText } from '../src/entities.js';
 
 let passed = 0;
 const test = (name, fn) => { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); process.exitCode = 1; } };
@@ -146,6 +148,56 @@ test('image snippet: bare form (no title), URL-encoded; legacy title form still 
     const rep = replaceImageUrl(mg.mes, '/user/images/Don%20Rosario/a.png', '/user/images/Don Rosario/b.png');
     assert.ok(rep.includes('(/user/images/Don%20Rosario/b.png)') && !rep.includes('/a.png'));
     assert.equal(removeImageByUrl(rep, '/user/images/Don%20Rosario/b.png'), ['p1', '', IMG_MARK, '![IF Imgen](/user/images/Don%20Rosario/old.png)'].join(String.fromCharCode(10)));
+});
+
+test('facets: parse "key: text" lines, merge duplicate keys, roundtrip', () => {
+    const f = parseFacets('outfit: white shirt\n$Back: big tattoo on left shoulder\nback: small scar\ngarbage line\nNSFW : pierced navel');
+    assert.deepEqual(f, [{ key: 'outfit', text: 'white shirt' }, { key: 'back', text: 'big tattoo on left shoulder, small scar' }, { key: 'nsfw', text: 'pierced navel' }]);
+    assert.equal(facetsText(f).split(String.fromCharCode(10)).length, 3);
+    assert.deepEqual(createEntity('styles', { facets: 'x: y' }).facets, [], 'styles have no facets');
+});
+
+const yenka = createEntity('personas', { name: 'Yenka', keyword: 'yenka', natural: 'Yenka is a small girl with dark parted hair and black eyes', facets: 'outfit: white button-up shirt\nback: a big tattoo on left shoulder back' });
+const rosario = createEntity('characters', { name: 'Rosario', keyword: 'rosario', natural: 'a tall mature man', facets: 'front: scar across the chest' });
+
+test('expandScene: $kw.facet, $char.facet, $userOutfit forms; unknown tokens dropped; used-map tracks facets', () => {
+    const r = expandScene({ scene: '$yenka turns her back walking in the rain, wet $yenka.outfit clinging to her skin showing $yenka.back; $rosario watches, $char.front visible, $userOutfit, $yenka.nope $ghost', characters: [rosario], personas: [yenka] });
+    assert.equal(r.text, 'Yenka turns her back walking in the rain, wet white button-up shirt clinging to her skin showing a big tattoo on left shoulder back; Rosario watches, scar across the chest visible, white button-up shirt, Yenka');
+    assert.deepEqual([...r.used.get(yenka.id)].sort(), ['back', 'outfit']);
+    assert.deepEqual([...r.used.get(rosario.id)], ['front']);
+    assert.deepEqual(r.unknown, ['$yenka.nope', '$ghost']);
+});
+
+test('roster lists detail tokens so the planner knows what exists', () => {
+    const line = rosterLine(yenka, 'user persona');
+    assert.ok(line.includes('$yenka') && line.includes('$yenka.outfit, $yenka.back'));
+    const s3 = defaultSettings(); s3.data.personas.push(yenka);
+    assert.ok(rosterText(s3, {}).includes('details: $yenka.outfit'));
+});
+
+test('refine prompt: cast carries base look + only referenced details; style + expanded scene included', () => {
+    const scene = '$yenka walks away in the rain showing $yenka.back';
+    const ex = expandScene({ scene, characters: [rosario], personas: [yenka] });
+    const { system, user } = buildRefinePrompt({ system: '', dialect: 'natural', scene, expanded: ex.text, used: ex.used, characters: [rosario], personas: [yenka], style: style });
+    assert.ok(system.includes('60-110 words') && !system.includes('{{'));
+    assert.ok(user.includes('Yenka (user persona): Yenka is a small girl'));
+    assert.ok(user.includes('- back: a big tattoo') && !user.includes('- outfit:'), 'only referenced facets listed');
+    assert.ok(user.includes('Rosario (character): a tall mature man') && !user.includes('- front:'));
+    assert.ok(user.includes('STYLE: anime style') && user.includes('SCENE') && user.includes(ex.text));
+});
+
+test('compilePrompt merged=true: cast fragments not prepended (refine already merged them), LoRA/negative/style still applied', () => {
+    const ents = resolveEntities(s, { text: '$lyna x', charAvatar: 'lyna.png' });
+    const a = compilePrompt({ scene: 'REFINED TEXT', ...ents, settings: s, backend: 'sd' });
+    const b = compilePrompt({ scene: 'REFINED TEXT', ...ents, settings: s, backend: 'sd', merged: true });
+    assert.ok(a.prompt.includes('1girl, silver hair') && !b.prompt.includes('1girl, silver hair'));
+    assert.ok(b.prompt.includes('<lora:lyna') && b.prompt.includes('anime style') && b.prompt.includes('REFINED TEXT'));
+    assert.equal(a.negative, b.negative);
+});
+
+test('planner rules mention detail tokens', () => {
+    const { system } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', context: '', dialect: 'tags' });
+    assert.ok(system.includes('DETAILS:') && system.includes('$yenka.back'));
 });
 
 test('import/export roundtrip + keyword dedupe', () => {

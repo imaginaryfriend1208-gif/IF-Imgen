@@ -1,5 +1,6 @@
 // IF Imgen - settings schema. Everything lives in extension_settings.IF_Imgen.
 import { BUILTIN_PRESETS } from './presets.js';
+import { DEFAULT_REFINE_SYSTEM } from './scene.js';
 
 export const MODULE = 'IF_Imgen';
 export const SETTINGS_VERSION = 2;
@@ -36,6 +37,8 @@ export function defaultSettings() {
             contextMessages: 4,         // K previous messages given to planner
             presetId: BUILTIN_PRESETS[0].id,
             dialect: 'tags',            // 'tags' | 'natural'
+            mode: 'plan',               // 'plan' = 1 LLM call (tokens expanded verbatim) | 'refine' = 2 calls (second LLM merges cast + scene)
+            refineSystem: DEFAULT_REFINE_SYSTEM,
             useQualityPrefix: true,
             qualityPrefix: 'masterpiece, best quality, amazing quality',
             useNegative: true,          // some models (e.g. Krea) take no negative prompt

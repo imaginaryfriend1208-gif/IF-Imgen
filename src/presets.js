@@ -7,13 +7,15 @@ WHAT YOU WRITE: an image prompt is a description of the SCENE in that paragraph 
 
 CAST: the ROSTER lists known people as $keyword with a short description so you can recognise them in the text. Their looks are attached automatically later, so NEVER re-describe their fixed appearance (hair, eyes, body, face, height). Mention each person present ONLY as their $keyword once, then describe what they are doing. If a paragraph has two people, mention both keywords and describe both. If a paragraph has no roster person, describe the scene without keywords.
 
+DETAILS: a roster entry may list detail tokens such as $yenka.back, $yenka.outfit, $yenka.nsfw, $yenka.body. Each holds a stored description you cannot see. When that part of the person is visible or matters for the shot, put the TOKEN in the prompt exactly as listed (e.g. "...walking away in the rain, wet $yenka.outfit clinging to her skin, showing $yenka.back"). Never guess or write the content of a detail yourself; never reference a token that is not listed.
+
 OUTPUT FORMAT (strict): reply with ONLY a JSON array, no prose, no markdown fence:
 [{"p": <paragraph number>, "prompt": "<image prompt>"}]
 - "p" must be one of the paragraph numbers listed. Pick the most visual moments.
 - Produce exactly {{count}} objects unless fewer paragraphs are usable.
 - {{dialect_rule}}
 
-EXAMPLE (roster has $mara and $tomas): [{"p": 3, "prompt": "$mara sits on the edge of a bed, leaning forward, sleeves rolled up, sewing a wound on $tomas's side with steady hands; $tomas lies back with eyes closed; dim bedroom, single lamp on a nightstand, warm low light, medium shot from the foot of the bed"}]`;
+EXAMPLE (roster has $mara with details $mara.outfit, $mara.back; and $tomas): [{"p": 3, "prompt": "$mara sits on the edge of a bed with her back to the viewer, $mara.outfit pushed off one shoulder revealing $mara.back, leaning forward and sewing a wound on $tomas's side with steady hands; $tomas lies back with eyes closed; dim bedroom, single lamp on a nightstand, warm low light, medium shot from the foot of the bed"}]`;
 
 const DIALECT_RULES = {
     tags: 'Write comma-separated danbooru-style tags (lowercase, spaces not underscores), 15-35 tags, most important first: count tags (1girl, 2boys), $keywords, actions, poses, expressions, clothing state, setting, lighting, camera. No sentences.',

@@ -4,9 +4,10 @@ import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, coun
 import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
 import { resolveEntities, rosterText } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
+import { expandScene, buildRefinePrompt } from './scene.js';
 import { clamp } from './util.js';
 
-/** @typedef {{ url:string, p:number, scene:string, prompt:string, negative:string, backend:string, model:string, at:number }} ImageRecord */
+/** @typedef {{ url:string, p:number, scene:string, expanded:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord */
 
 export function createPipeline({ settings, getContext, backends, llm, saveImage, log = () => {}, onChange = () => {} }) {
     const inflight = new Map(); // messageId -> AbortController
@@ -43,23 +44,38 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
     const findRecord = (msg, url) => records(msg).find(r => r.url === url) ?? null;
 
-    /** Compile scene -> final prompt with current entities/style/settings. */
-    function compileScene(ctx, scene, backendId) {
+    /**
+     * Compile a planner scene -> final prompt with the current entities/style/settings.
+     * mode 'plan'   : tokens ($yenka, $yenka.back) expanded verbatim, cast fragments prepended by compiler.
+     * mode 'refine' : second LLM call merges cast base + referenced details + scene into one prompt.
+     */
+    async function compileScene(ctx, scene, backendId, signal) {
+        const g = settings.generate;
         const ident = chatIdentity(ctx);
         const ents = resolveEntities(settings, { text: scene, ...ident });
-        const { prompt, negative } = compilePrompt({ scene, ...ents, settings, backend: backendId });
-        return { prompt, negative, ents };
+        const ex = expandScene({ scene, characters: ents.characters, personas: ents.personas });
+        if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
+        let refined = '';
+        if (g.mode === 'refine') {
+            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, scene, expanded: ex.text, used: ex.used, characters: ents.characters, personas: ents.personas, style: ents.style });
+            refined = (await llm.chat({ ...msgs, signal })).replace(/^["'`\s]+|["'`\s]+$/g, '');
+            if (!refined) throw new Error('Refine LLM returned an empty prompt.');
+        }
+        const { prompt, negative } = compilePrompt({ scene: refined || ex.text, ...ents, settings, backend: backendId, merged: Boolean(refined) });
+        return { prompt, negative, ents, expanded: ex.text, refined, unknown: ex.unknown };
     }
 
     async function render(ctx, { scene, p }, signal, status) {
         const backend = backends.active();
         const params = effectiveParams(settings, backend.id);
-        const { prompt, negative, ents } = compileScene(ctx, scene, backend.id);
+        if (settings.generate.mode === 'refine') status('refining prompt…');
+        const { prompt, negative, ents, expanded, refined } = await compileScene(ctx, scene, backend.id, signal);
         log(`compiled [chars: ${ents.characters.map(e => e.name).join(',') || '-'} | personas: ${ents.personas.map(e => e.name).join(',') || '-'} | style: ${ents.style?.name ?? '-'}]`, prompt);
+        status('rendering…');
         const b64 = await backend.generate({ prompt, negative, params }, signal);
         const url = safeImageUrl(await saveImage(b64, ctx.characters?.[ctx.characterId]?.name || 'IF_Imgen'));
         /** @type {ImageRecord} */
-        const rec = { url, p, scene, prompt, negative, backend: backend.id, model: params.model ?? '', at: Date.now() };
+        const rec = { url, p, scene, expanded, refined, prompt, negative, mode: settings.generate.mode, backend: backend.id, model: params.model ?? '', at: Date.now() };
         return rec;
     }
 
@@ -141,7 +157,6 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         inflight.set(messageId, controller);
         const status = s => { log(`#${messageId} regen ${s}`); onStatus?.(s); };
         try {
-            status('rendering…');
             const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0 }, controller.signal, status);
             const list = records(msg);
             const i = list.findIndex(r => r.url === url);
@@ -191,7 +206,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const r = migrateLegacyImages(m.mes);
             if (!r.changed) return;
             const list = records(m);
-            for (const { url, title } of r.recovered) if (!list.some(x => x.url === url)) list.push({ url, p: 0, scene: '', prompt: title, negative: '', backend: '', model: '', at: 0 });
+            for (const { url, title } of r.recovered) if (!list.some(x => x.url === url)) list.push({ url, p: 0, scene: '', expanded: '', refined: '', prompt: title, negative: '', mode: '', backend: '', model: '', at: 0 });
             setMessageText(ctx, id, r.mes);
             changed++;
         });
@@ -207,6 +222,6 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         },
         isRunning: id => inflight.has(id),
         recordFor: (messageId, url) => findRecord(getContext().chat[messageId] ?? {}, url),
-        compilePreview: scene => compileScene(getContext(), scene, backends.active().id),
+        compilePreview: (scene, signal) => compileScene(getContext(), scene, backends.active().id, signal),
     };
 }

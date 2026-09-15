@@ -15,7 +15,7 @@ export function collectChatImages(chat) {
         for (const img of listImages(m.mes)) {
             const url = safeImageUrl(img.url);
             const rec = recs.find(r => r.url === url) ?? recs.find(r => r.url === img.url);
-            out.push({ url, messageId: i, name: m.name ?? '', scene: rec?.scene ?? '', prompt: rec?.prompt ?? img.title ?? '' });
+            out.push({ url, messageId: i, name: m.name ?? '', scene: rec?.scene ?? '', refined: rec?.refined ?? '', prompt: rec?.prompt ?? img.title ?? '' });
         }
     });
     return out;
@@ -62,6 +62,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             img.src = it.url;
             cap.innerHTML = `<b>#${idx + 1}/${items.length} · message ${it.messageId}</b>`
                 + (it.scene ? `<div><span class="ifimgen-cap-k">scene</span> ${escapeHtml(it.scene)}</div>` : '')
+                + (it.refined ? `<div><span class="ifimgen-cap-k">refined</span> ${escapeHtml(it.refined)}</div>` : '')
                 + (it.prompt ? `<div><span class="ifimgen-cap-k">final prompt</span> ${escapeHtml(it.prompt)}</div>` : '<div class="ifimgen-note">no stored prompt (legacy image) — use Edit & regenerate</div>');
             setStatus('');
         };
@@ -74,7 +75,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             lock(true);
             try {
                 const fresh = await pipeline.regenerate(it.messageId, it.url, { scene, onStatus: s => setStatus(s) });
-                if (fresh) { items[idx] = { ...it, url: fresh.url, scene: fresh.scene, prompt: fresh.prompt }; show(); setStatus('Regenerated.', 'ok'); onChanged(); }
+                if (fresh) { items[idx] = { ...it, url: fresh.url, scene: fresh.scene, refined: fresh.refined, prompt: fresh.prompt }; show(); setStatus('Regenerated.', 'ok'); onChanged(); }
             } catch (e) { setStatus(e.message, 'error'); }
             finally { lock(false); }
         }

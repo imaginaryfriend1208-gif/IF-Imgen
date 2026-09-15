@@ -1,5 +1,6 @@
 // IF Imgen - unified entity model for characters / personas / styles. Pure module.
 import { uuid, normalizeText, splitList, escapeRegex } from './util.js';
+import { parseFacets, rosterLine } from './scene.js';
 
 export const KINDS = ['characters', 'personas', 'styles'];
 export const LORA_POSITIONS = ['front', 'after_style', 'end'];
@@ -14,6 +15,7 @@ export function createEntity(kind, partial = {}) {
         tags: String(partial.tags ?? '').trim(),        // danbooru tags
         natural: String(partial.natural ?? '').trim(),  // natural-language description
         negative: String(partial.negative ?? '').trim(),
+        facets: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.facets), // [{key:'back', text:'...'}] referenced as $keyword.back
         loras: splitList(partial.loras),               // ["<lora:x:0.8>", ...]
         loraPosition: LORA_POSITIONS.includes(partial.loraPosition) ? partial.loraPosition : 'front',
         bind: {
@@ -96,22 +98,17 @@ export function resolveEntities(settings, { text, charAvatar, personaAvatar }) {
     return { characters, personas, style };
 }
 
-/** Roster text handed to the planner LLM. */
+/** Roster text handed to the planner LLM (keyword, who they are, available $keyword.detail tokens). */
 export function rosterText(settings, { charAvatar, personaAvatar }) {
     const lines = [];
-    const add = (label, list) => {
-        for (const e of list) {
-            const desc = e.natural || e.tags || '';
-            lines.push(`$${e.keyword} — ${label}: ${e.name}${desc ? ` — ${desc.slice(0, 160)}` : ''}`);
-        }
-    };
+    const add = (label, list) => { for (const e of list) lines.push(rosterLine(e, label)); };
     const d = settings.data;
     add('character', d.characters.filter(e => isBound(e, { charAvatar, personaAvatar })));
     add('user persona', d.personas.filter(e => isBound(e, { charAvatar, personaAvatar })));
     // Unbound ones are still listed by keyword so the LLM can mention them.
     add('character', d.characters.filter(e => !isBound(e, { charAvatar, personaAvatar })));
     add('user persona', d.personas.filter(e => !isBound(e, { charAvatar, personaAvatar })));
-    return lines.join('\n');
+    return lines.join(String.fromCharCode(10));
 }
 
 // ---- import / export -------------------------------------------------------

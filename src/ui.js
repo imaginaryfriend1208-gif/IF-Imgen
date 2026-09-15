@@ -7,6 +7,7 @@ import { PARAM_KEYS } from './settings.js';
 import { modelParams, hasProfile } from './prompt.js';
 import { ICONS, btn, fileBtn } from './icons.js';
 import { mountGallery, galleryMarkup, createViewer } from './gallery.js';
+import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM } from './scene.js';
 
 const ENTITY_TABS = [
     { kind: 'characters', tab: 'chars', label: 'Characters', icon: 'users', hint: 'Bind to ST character cards. Mentioned in plan via $keyword.' },
@@ -165,6 +166,11 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
     bind('ifimgen_count', () => g.imagesPerResponse, v => g.imagesPerResponse = v);
     bind('ifimgen_ctx', () => g.contextMessages, v => g.contextMessages = v);
     bind('ifimgen_dialect', () => g.dialect, v => g.dialect = v);
+    const showMode = () => root.querySelectorAll('[data-mode]').forEach(b => b.style.display = b.dataset.mode === g.mode ? '' : 'none');
+    bind('ifimgen_mode', () => g.mode, v => { g.mode = v; showMode(); });
+    bind('ifimgen_refine_system', () => g.refineSystem, v => g.refineSystem = v);
+    $('ifimgen_refine_reset').addEventListener('click', () => { g.refineSystem = DEFAULT_REFINE_SYSTEM; $('ifimgen_refine_system').value = g.refineSystem; save(); });
+    showMode();
     bind('ifimgen_quality', () => g.qualityPrefix, v => g.qualityPrefix = v);
     bind('ifimgen_negative', () => g.negative, v => g.negative = v);
     bind('ifimgen_minchars', () => g.minParagraphChars, v => g.minParagraphChars = v);
@@ -215,19 +221,34 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
         } catch (err) { status('ifimgen_gen_status', err.message, 'error'); }
         e.target.value = '';
     });
-    $('ifimgen_preview').addEventListener('click', () => {
+    $('ifimgen_preview').addEventListener('click', async () => {
         const scene = $('ifimgen_preview_scene').value.trim() || '$keyword does something in a place';
-        const { prompt, negative, ents } = pipeline.compilePreview(scene);
-        $('ifimgen_preview_out').textContent =
-            `[characters] ${ents.characters.map(e => e.name).join(', ') || '-'}
+        const out = $('ifimgen_preview_out');
+        out.textContent = g.mode === 'refine' ? 'Compiling (calls the LLM once for refine)…' : 'Compiling…';
+        try {
+            const { prompt, negative, ents, expanded, refined, unknown } = await pipeline.compilePreview(scene);
+            out.textContent =
+                `[characters] ${ents.characters.map(e => e.name).join(', ') || '-'}
 [personas] ${ents.personas.map(e => e.name).join(', ') || '-'}
-[style] ${ents.style?.name ?? '-'}
+[style] ${ents.style?.name ?? '-'}`
+                + (unknown.length ? `
+[unresolved tokens] ${unknown.join(' ')}` : '')
+                + `
 
-PROMPT:
+EXPANDED SCENE:
+${expanded}`
+                + (refined ? `
+
+REFINED (2nd call):
+${refined}` : '')
+                + `
+
+FINAL PROMPT:
 ${prompt}
 
 NEGATIVE:
 ${negative || '(disabled / empty)'}`;
+        } catch (e) { out.textContent = `Error: ${e.message}`; }
     });
     $('ifimgen_run_last').addEventListener('click', async () => {
         const ctx = getContext();
@@ -263,6 +284,7 @@ ${negative || '(disabled / empty)'}`;
             e ??= createEntity(kind);
             q('.ent-name').value = e.name; q('.ent-keyword').value = e.keyword; q('.ent-aliases').value = e.aliases.join(', ');
             q('.ent-tags').value = e.tags; q('.ent-natural').value = e.natural; q('.ent-negative').value = e.negative;
+            if (q('.ent-facets')) q('.ent-facets').value = facetsText(e.facets);
             q('.ent-loras').value = e.loras.join('\n'); q('.ent-lorapos').value = e.loraPosition;
             q('.ent-always').checked = e.bind.always;
             renderBind(e);
@@ -280,7 +302,7 @@ ${negative || '(disabled / empty)'}`;
             return createEntity(kind, {
                 id: base?.id, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
                 aliases: q('.ent-aliases').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value,
-                negative: q('.ent-negative').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
+                negative: q('.ent-negative').value, facets: q('.ent-facets')?.value ?? '', loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
                 bind: {
                     always: q('.ent-always').checked,
                     characters: [...panel.querySelectorAll('[data-bind="characters"]:checked')].map(x => x.value),
@@ -358,6 +380,8 @@ function entityPanel({ kind, tab, label, icon, hint }) {
             <div class="ifimgen-row"><label>Tags (danbooru)</label><textarea class="text_pole ent-tags"></textarea></div>
             <div class="ifimgen-row"><label>Natural description</label><textarea class="text_pole ent-natural"></textarea></div>
             <div class="ifimgen-row"><label>Negative</label><input class="text_pole ent-negative" type="text"></div>
+            ${isStyle ? '' : `<div class="ifimgen-row"><label>Details ($kw.key)</label><textarea class="text_pole ent-facets" rows="5" placeholder="one per line, key: description&#10;outfit: white button-up shirt, black skirt&#10;back: a big tattoo on the left shoulder blade&#10;nsfw: small breasts, pierced navel"></textarea></div>
+            <div class="ifimgen-note">Suggested keys: ${FACET_KEYS.join(', ')} (any lowercase key works). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).</div>`}
             <div class="ifimgen-row"><label>LoRA lines</label><textarea class="text_pole ent-loras" placeholder="&lt;lora:name:0.8&gt; one per line"></textarea></div>
             <div class="ifimgen-row"><label>LoRA position</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>
         </div>
@@ -451,6 +475,19 @@ function generatePanel() {
                 <div class="ifimgen-row"><label for="ifimgen_dialect">Prompt dialect</label><select id="ifimgen_dialect" class="text_pole"><option value="tags">Tags (danbooru)</option><option value="natural">Natural language</option></select></div>
             </div>
             <div class="ifimgen-note">The planner reads the reply as numbered paragraphs and places each image right after the paragraph it illustrates.</div>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('brain', 'LLM calls per image')}
+            <div class="ifimgen-row"><label for="ifimgen_mode">Mode</label>
+                <select id="ifimgen_mode" class="text_pole">
+                    <option value="plan">1 call: planner only (tokens expanded verbatim; good for danbooru-tag models)</option>
+                    <option value="refine">2 calls: planner + refine (second LLM rewrites cast details + scene into one prompt; good for natural-language models)</option>
+                </select></div>
+            <div data-mode="refine" style="display:none">
+                <div class="ifimgen-row"><label>Refine system prompt</label>${btn({ id: 'ifimgen_refine_reset', icon: 'refresh', title: 'Reset to default' })}</div>
+                <textarea id="ifimgen_refine_system" class="text_pole" rows="7"></textarea>
+                <div class="ifimgen-note">Placeholder: {{dialect_rule}}. Quality prefix, style fragment and LoRAs are still added by the compiler; the refine step only merges characters/personas with the scene.</div>
+            </div>
         </div>
         <div class="ifimgen-box">
             ${boxTitle('brain', 'Planner preset')}

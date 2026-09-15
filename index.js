@@ -13,7 +13,7 @@ import { createPipeline } from './src/pipeline.js';
 import { mountDrawer } from './src/ui.js';
 import { createViewer, collectChatImages } from './src/gallery.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);
