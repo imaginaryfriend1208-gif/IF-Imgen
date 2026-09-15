@@ -78,7 +78,8 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
     const modelSel = $('ifimgen_model');
     let editingModel = ''; // model whose params are shown in the box
     function fillModels() {
-        const list = viewing === 'nai' ? NAI_MODELS : c.sd.models;
+        // Always include the current default model, even before "Fetch models" (e.g. right after migration).
+        const list = [...new Set([...(viewing === 'nai' ? NAI_MODELS : c.sd.models), c[viewing].model].filter(Boolean))];
         editingModel = list.includes(editingModel) ? editingModel : (c[viewing].model || list[0] || '');
         fillSelect(modelSel, list.map(m => ({ value: m, label: `${m === c[viewing].model ? '★ ' : ''}${m}${hasProfile(settings, viewing, m) ? '' : '  (no profile)'}` })), editingModel, list.length ? null : '-- Fetch models first --');
         loadParams();
