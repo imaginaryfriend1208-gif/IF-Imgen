@@ -66,6 +66,20 @@ test('matchByKeyword: $keyword, alias, diacritics, underscore~space, no partial'
     assert.equal(matchByKeyword([lyna], 'lynazor').length, 0);
 });
 
+test('Vietnamese: "Dư Tô" -> $du_to, alias with space, diacritic text matches, facet keys with diacritics, $Dư_Tô token expands', () => {
+    const duTo = createEntity('characters', { name: 'Dư Tô', keyword: 'Dư Tô', aliases: 'Anh Dư', natural: 'a tall man', facets: 'trang phục: áo dài trắng\nlưng: hình xăm rồng' });
+    assert.equal(duTo.keyword, 'du_to');
+    assert.deepEqual(duTo.aliases, ['anh_du']);
+    assert.deepEqual(duTo.facets.map(f => f.key), ['trang_phuc', 'lung']);
+    assert.equal(matchByKeyword([duTo], 'Dư Tô ngồi xuống ghế').length, 1);
+    assert.equal(matchByKeyword([duTo], 'anh Dư bước vào').length, 1);
+    assert.equal(matchByKeyword([duTo], 'du toi').length, 0, 'no partial match');
+    assert.ok(rosterLine(duTo, 'character').includes('$du_to.trang_phuc'));
+    const r = expandScene({ scene: '$du_to đứng quay lưng, $du_to.trang_phuc ướt, lộ $Dư_Tô.lưng', characters: [duTo], personas: [] });
+    assert.equal(r.text, 'Dư Tô đứng quay lưng, áo dài trắng ướt, lộ hình xăm rồng');
+    assert.deepEqual(r.unknown, []);
+});
+
 test('resolveEntities: no keyword -> bound entities; keyword -> only the named ones; default style', () => {
     const r = resolveEntities(s, { text: 'a quiet room', charAvatar: 'lyna.png', personaAvatar: 'x' });
     assert.equal(r.characters[0].id, lyna.id, 'bound char used when planner named nobody');

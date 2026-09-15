@@ -29,6 +29,8 @@ const en = {
     tab_settings: 'Settings', tab_chars: 'Characters', tab_personas: 'Personas', tab_styles: 'Styles',
     tab_gallery: 'Gallery', tab_help: 'How to use', tab_generate: 'Generate',
     lang_title: 'Language',
+    hdr_update: 'new v{v}',
+    hdr_update_title: 'A newer IF Imgen (v{v}) is on GitHub. Click to open. Update via Extensions → Manage extensions → Update.',
 
     // ---- entity tabs
     hint_chars: 'Visual definitions written here are the ONLY source for the image prompt (nothing is read from the ST card). Bind = auto-load in a chat / card. Referenced in plan via $keyword.',
@@ -38,7 +40,7 @@ const en = {
     box_fragments: 'Prompt fragments', lbl_tags: 'Tags (danbooru)', lbl_natural: 'Natural description', lbl_negative: 'Negative',
     lbl_details: 'Details ($kw.key)',
     ph_details: 'one per line, key: description\noutfit: white button-up shirt, black skirt\nback: a big tattoo on the left shoulder blade\nnsfw: small breasts, pierced navel',
-    note_details: 'Suggested keys: {keys} (any lowercase key works). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).',
+    note_details: 'Suggested keys: {keys} (any key works, Vietnamese too: <code>trang phục:</code> becomes <code>$kw.trang_phuc</code>). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).',
     lbl_loras: 'LoRA lines', ph_loras: '<lora:name:0.8> one per line', lbl_lorapos: 'LoRA position',
     box_bind: 'Bind — auto-load when opened',
     note_bind: 'Binding only links this entry to a chat / card / persona so it loads automatically. Nothing is read from the card itself.',
@@ -137,6 +139,8 @@ const vi = {
     tab_settings: 'Cài đặt', tab_chars: 'Nhân vật', tab_personas: 'Persona', tab_styles: 'Style',
     tab_gallery: 'Thư viện', tab_help: 'Hướng dẫn', tab_generate: 'Tạo ảnh',
     lang_title: 'Ngôn ngữ',
+    hdr_update: 'có bản v{v}',
+    hdr_update_title: 'Đã có IF Imgen mới (v{v}) trên GitHub. Bấm để mở. Cập nhật qua Extensions → Manage extensions → Update.',
 
     // ---- entity tabs
     hint_chars: 'Mô tả ngoại hình viết ở đây là nguồn DUY NHẤT cho prompt ảnh (không đọc gì từ card ST). Bind = tự nạp trong chat / card. Planner gọi bằng $keyword.',

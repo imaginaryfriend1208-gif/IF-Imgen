@@ -144,16 +144,23 @@ jQuery(async () => {
     wrap.className = 'extension_container';
     wrap.innerHTML = `
         <div class="inline-drawer">
-            <div class="inline-drawer-toggle inline-drawer-header"><b>IF Imgen</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
+            <div class="inline-drawer-toggle inline-drawer-header">
+                <b>IF Imgen <small class="ifimgen-hdr-ver">v${VERSION}</small><span id="ifimgen_hdr_update" class="ifimgen-hdr-update" hidden></span></b>
+                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+            </div>
             <div class="inline-drawer-content" id="ifimgen_root"></div>
         </div>`;
     host.appendChild(wrap);
-    const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, version: VERSION };
-    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
+    // Badge click opens GitHub without toggling the drawer.
+    wrap.querySelector('#ifimgen_hdr_update').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); window.open(REPO_URL, '_blank', 'noopener'); });
+    const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer };
+    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
     drawer = mountDrawer(drawerDeps);
     try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
     addAllButtons();
     foldAll();
     LOG(`v${VERSION} loaded (settings ns: ${MODULE})`);
+    checkUpdate();
+    setInterval(checkUpdate, 6 * 60 * 60 * 1000);
 });

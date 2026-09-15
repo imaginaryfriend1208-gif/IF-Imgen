@@ -9,7 +9,7 @@
 // Mode 'plan'  (1 LLM call): tokens are expanded verbatim into the scene text.
 // Mode 'refine' (2 LLM calls): cast base + referenced facets + scene are handed to a
 // second LLM which rewrites them into ONE coherent image prompt.
-import { keysOf } from './entities.js';
+import { keysOf, normalizeKeyword } from './entities.js';
 
 export const FACET_KEYS = ['outfit', 'front', 'back', 'body', 'face', 'nsfw', 'sfw', 'note'];
 
@@ -18,7 +18,8 @@ export function parseFacets(value) {
     if (Array.isArray(value)) return value.filter(f => f && f.key && f.text).map(f => ({ key: normKey(f.key), text: String(f.text).trim() })).filter(f => f.key && f.text);
     const out = [];
     for (const line of String(value ?? '').split('\n')) {
-        const m = line.match(/^\s*\$?([A-Za-z0-9_\-]+)\s*:\s*(.+?)\s*$/);
+        // Key may be Vietnamese / contain spaces ("trang phục: áo dài") -> normalized to trang_phuc.
+        const m = line.match(/^\s*\$?([^\s:$][^:]*?)\s*:\s*(.+?)\s*$/);
         if (!m) continue;
         const key = normKey(m[1]);
         if (!key) continue;
@@ -32,13 +33,15 @@ export function facetsText(list) {
     return (list ?? []).map(f => `${f.key}: ${f.text}`).join('\n');
 }
 
-const normKey = k => String(k ?? '').trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '');
+// Same normalization as keywords: strip $, diacritics (đ -> d), lowercase, spaces -> underscore.
+const normKey = k => normalizeKeyword(k);
 const facetOf = (e, key) => (e.facets ?? []).find(f => f.key === key) ?? null;
 const RELATIVE = { char: 'characters', character: 'characters', user: 'personas', persona: 'personas' };
-const TOKEN_RE = /\$([A-Za-z][A-Za-z0-9_\-]*)(?:\.([A-Za-z0-9_\-]+))?/g;
+// Unicode-aware so "$Dư_Tô.lưng" written by the LLM still resolves to $du_to.lung.
+const TOKEN_RE = /\$([\p{L}][\p{L}\p{N}_\-]*)(?:\.([\p{L}\p{N}_\-]+))?/gu;
 
 function entityByKey(list, key) {
-    const k = key.toLowerCase();
+    const k = normalizeKeyword(key);
     return list.find(e => keysOf(e).some(x => x === k || x.replace(/_/g, '') === k.replace(/_/g, ''))) ?? null;
 }
 
