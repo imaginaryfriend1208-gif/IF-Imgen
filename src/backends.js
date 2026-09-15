@@ -16,7 +16,7 @@ export function createSdBackend({ getRequestHeaders, settings }) {
     const body = extra => JSON.stringify({ url: cfg().url, auth: cfg().auth, ...extra });
 
     async function post(path, extra = {}, signal) {
-        const r = await fetch(path, { method: 'POST', headers: getRequestHeaders(), body: body(extra), signal });
+        const r = await fetch(path, { method: 'POST', headers: { ...getRequestHeaders() }, body: body(extra), signal });
         if (!r.ok) throw new Error(`${path} -> HTTP ${r.status}${r.status === 500 ? ' (endpoint unreachable or rejected the request)' : ''}`);
         return r;
     }
@@ -32,6 +32,7 @@ export function createSdBackend({ getRequestHeaders, settings }) {
         /** @returns {Promise<string>} base64 png */
         async generate({ prompt, negative, params, seed = -1 }, signal) {
             const r = await post('/api/sd/generate', {
+                ifimgen_raw: cfg().sdRaw !== false, // proxy: skip character supplements for this request
                 prompt, negative_prompt: negative,
                 sampler_name: params.sampler, scheduler: params.scheduler,
                 steps: params.steps, cfg_scale: params.cfg, width: params.width, height: params.height,

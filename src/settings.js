@@ -19,6 +19,11 @@ export function defaultSettings() {
         connection: {
             backend: 'sd', // 'sd' | 'nai'  (the ACTIVE image API)
             sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [] },
+            // Optional HTTP header sent with every SD/Comfy request. Fill it in
+            // Settings (Image API box) when your proxy supports it, e.g. name
+            // X-IF-Imgen / value raw-prompt -> the proxy skips character
+            // supplements and forwards the prompt untouched. A1111 ignores it.
+            sdRaw: true, // add ifimgen_raw:true to the generate body; your proxy can read it to skip character supplements
             nai: { apiKey: '', model: 'nai-diffusion-4-5-full', variety: false },
             // profiles[backend][modelName] = { sampler, scheduler, steps, cfg, width, height }
             // profiles[backend]['*'] = fallback for models without a saved profile
