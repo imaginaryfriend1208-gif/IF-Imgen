@@ -15,10 +15,11 @@ import { createViewer, collectChatImages } from './src/gallery.js';
 import { t, setLang } from './src/i18n.js';
 import { compareVersions } from './src/util.js';
 
-const VERSION = '0.9.0';
+const VERSION = '0.9.1';
 const REPO_URL = 'https://github.com/imaginaryfriend1208-gif/IF-Imgen';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/imaginaryfriend1208-gif/IF-Imgen/main/manifest.json';
-const DISCORD_URL = 'https://discord.gg/diuenmii';
+// Direct message: Discord only links profiles by numeric user id (username diuenmii). Opens the profile -> Message.
+const DISCORD_URL = 'https://discord.com/users/1148686772281278585';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);

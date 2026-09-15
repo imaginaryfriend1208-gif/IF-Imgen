@@ -30,7 +30,7 @@ const en = {
     tab_gallery: 'Gallery', tab_help: 'How to use', tab_generate: 'Generate',
     lang_title: 'Language',
     hdr_update: 'Update', hdr_update_title: 'A newer IF Image (v{v}) is on GitHub. Click to open. Update via Extensions → Manage extensions → Update.',
-    btn_discord: 'Contact · Discord', btn_discord_title: 'Join the Discord server (diuenmii)',
+    btn_discord: 'Contact · Discord', btn_discord_title: 'Message diuenmii on Discord (opens the profile, then press Message)',
 
     // ---- entity tabs
     hint_chars: 'Visual definitions written here are the ONLY source for the image prompt (nothing is read from the ST card). Bind = auto-load in a chat / card. Referenced in plan via $keyword.',
@@ -79,8 +79,9 @@ const en = {
     opt_mode_refine: '2 calls: planner + refine (second LLM rewrites cast details + scene into one prompt; good for natural-language models)',
     lbl_refine_system: 'Refine system prompt', btn_reset_default: 'Reset to default',
     note_refine: 'Placeholder: {{dialect_rule}}. Quality prefix, style fragment and LoRAs are still added by the compiler; the refine step only merges characters/personas with the scene.',
-    box_preset: 'Planner preset', btn_save_as: 'Save as…', btn_delete_preset: 'Delete preset', btn_export_presets: 'Export presets', btn_import_presets: 'Import presets',
-    note_preset: 'Built-in (★) presets are read-only — use “Save as…” to fork. Placeholders: {{count}}, {{dialect_rule}}.',
+    box_preset: 'Planner preset', btn_save_preset: 'Save preset', btn_save_as: 'Save as new…', btn_delete_preset: 'Delete preset', btn_export_presets: 'Export presets', btn_import_presets: 'Import presets',
+    note_preset: 'Edit the prompt freely. A <b>*</b> after the preset name means unsaved changes — press <b>Save preset</b> to keep them. Saving an edited built-in (★) preset creates your own copy. Placeholders: {{count}}, {{dialect_rule}}.',
+    st_preset_saved: 'Preset saved.', st_preset_copy: '{name} (edited)', ph_preset_name: 'Preset name:',
     box_frame: 'Prompt frame', lbl_quality: 'Quality prefix',
     note_negative: 'Untick Negative for models that ignore it (e.g. Krea); entity negatives are skipped as well.',
     h_overrides: 'Overrides (0 = use model profile)',
@@ -141,7 +142,7 @@ const vi = {
     tab_gallery: 'Thư viện', tab_help: 'Hướng dẫn', tab_generate: 'Tạo ảnh',
     lang_title: 'Ngôn ngữ',
     hdr_update: 'Update', hdr_update_title: 'Đã có IF Image mới (v{v}) trên GitHub. Bấm để mở. Cập nhật qua Extensions → Manage extensions → Update.',
-    btn_discord: 'Liên hệ · Discord', btn_discord_title: 'Tham gia server Discord (diuenmii)',
+    btn_discord: 'Liên hệ · Discord', btn_discord_title: 'Nhắn tin riêng cho diuenmii trên Discord (mở hồ sơ, bấm Nhắn tin)',
 
     // ---- entity tabs
     hint_chars: 'Mô tả ngoại hình viết ở đây là nguồn DUY NHẤT cho prompt ảnh (không đọc gì từ card ST). Bind = tự nạp trong chat / card. Planner gọi bằng $keyword.',
@@ -190,8 +191,9 @@ const vi = {
     opt_mode_refine: '2 lần: planner + refine (LLM thứ hai viết lại chi tiết nhân vật + cảnh thành một prompt; hợp model ngôn ngữ tự nhiên)',
     lbl_refine_system: 'System prompt refine', btn_reset_default: 'Khôi phục mặc định',
     note_refine: 'Placeholder: {{dialect_rule}}. Quality prefix, style và LoRA vẫn do compiler thêm; bước refine chỉ hòa trộn nhân vật/persona với cảnh.',
-    box_preset: 'Preset planner', btn_save_as: 'Lưu thành…', btn_delete_preset: 'Xóa preset', btn_export_presets: 'Xuất preset', btn_import_presets: 'Nhập preset',
-    note_preset: 'Preset có sẵn (★) chỉ đọc — dùng “Lưu thành…” để tạo bản riêng. Placeholder: {{count}}, {{dialect_rule}}.',
+    box_preset: 'Preset planner', btn_save_preset: 'Lưu preset', btn_save_as: 'Lưu thành preset mới…', btn_delete_preset: 'Xóa preset', btn_export_presets: 'Xuất preset', btn_import_presets: 'Nhập preset',
+    note_preset: 'Sửa prompt thoải mái. Dấu <b>*</b> sau tên preset = có chỉnh sửa chưa lưu — bấm <b>Lưu preset</b> để giữ lại. Lưu một preset có sẵn (★) đã sửa sẽ tạo bản riêng của bạn. Placeholder: {{count}}, {{dialect_rule}}.',
+    st_preset_saved: 'Đã lưu preset.', st_preset_copy: '{name} (đã sửa)', ph_preset_name: 'Tên preset:',
     box_frame: 'Khung prompt', lbl_quality: 'Quality prefix',
     note_negative: 'Bỏ tick Negative với model không dùng negative (vd. Krea); negative của nhân vật cũng sẽ bị bỏ.',
     h_overrides: 'Ghi đè (0 = dùng profile model)',

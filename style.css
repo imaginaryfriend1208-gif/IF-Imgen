@@ -168,6 +168,9 @@ body.ifimgen-align-right .ifimgen-fold { text-align: right; }
 .ifimgen-pv-block .ifimgen-row { justify-content: flex-end; }
 .ifimgen-gallery-test .ifimgen-thumb { border-style: dashed; }
 
+/* ---- planner preset: unsaved edits */
+#ifimgen_preset_text.ifimgen-dirty { border-color: #e0af68; box-shadow: inset 3px 0 0 #e0af68; }
+
 /* ---- chat: collapsed images behind a small button */
 .ifimgen-fold { margin: 4px 0; }
 .ifimgen-fold-btn {

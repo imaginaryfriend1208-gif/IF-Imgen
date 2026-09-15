@@ -213,31 +213,59 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     frameRow('ifimgen_use_quality', '#ifimgen_quality_row', 'useQualityPrefix');
     frameRow('ifimgen_use_negative', '#ifimgen_negative_row', 'useNegative');
 
+    // Presets: every prompt (built-in too) is editable. Unsaved text lives in `presetDrafts` (per preset id, kept
+    // while switching presets) and shows as " *" after the name until Save. Saving an edited built-in forks a copy.
     const presetSel = $('ifimgen_preset');
     const presetText = $('ifimgen_preset_text');
+    const presetDrafts = new Map();
+    const presetLabel = p => `${p.builtin ? '★ ' : ''}${p.name}${presetDrafts.has(p.id) ? ' *' : ''}`;
+    const curPreset = () => allPresets(settings).find(p => p.id === g.presetId) ?? BUILTIN_PRESETS[0];
     function fillPresets() {
         const list = allPresets(settings);
-        fillSelect(presetSel, list.map(p => ({ value: p.id, label: p.builtin ? `★ ${p.name}` : p.name })), g.presetId);
-        const cur = list.find(p => p.id === g.presetId) ?? list[0];
-        presetText.value = cur?.system ?? '';
-        presetText.readOnly = Boolean(cur?.builtin);
-        $('ifimgen_preset_delete').disabled = Boolean(cur?.builtin);
+        fillSelect(presetSel, list.map(p => ({ value: p.id, label: presetLabel(p) })), g.presetId);
+        const cur = curPreset();
+        presetText.value = presetDrafts.get(cur.id) ?? cur.system ?? '';
+        $('ifimgen_preset_delete').disabled = Boolean(cur.builtin);
+        $('ifimgen_preset_save').disabled = !presetDrafts.has(cur.id);
+        presetText.classList.toggle('ifimgen-dirty', presetDrafts.has(cur.id));
     }
     fillPresets();
     presetSel.addEventListener('change', () => { g.presetId = presetSel.value; save(); fillPresets(); });
-    presetText.addEventListener('change', () => {
-        const cur = settings.data.presets.find(p => p.id === g.presetId);
-        if (cur) { cur.system = presetText.value; save(); }
+    presetText.addEventListener('input', () => {
+        const cur = curPreset();
+        if (presetText.value === cur.system) presetDrafts.delete(cur.id); else presetDrafts.set(cur.id, presetText.value);
+        const opt = presetSel.options[presetSel.selectedIndex];
+        if (opt && opt.value === cur.id) opt.textContent = presetLabel(cur);
+        $('ifimgen_preset_save').disabled = !presetDrafts.has(cur.id);
+        presetText.classList.toggle('ifimgen-dirty', presetDrafts.has(cur.id));
+    });
+    const askPresetName = initial => getContext().callGenericPopup(t('ph_preset_name'), getContext().POPUP_TYPE.INPUT, initial);
+    $('ifimgen_preset_save').addEventListener('click', async () => {
+        const cur = curPreset();
+        if (!presetDrafts.has(cur.id)) return;
+        const text = presetDrafts.get(cur.id);
+        if (cur.builtin) {
+            const name = await askPresetName(t('st_preset_copy', { name: cur.name }));
+            if (!name) return;
+            const p = createPreset({ name: String(name), system: text });
+            settings.data.presets.push(p); g.presetId = p.id;
+        } else {
+            cur.system = text;
+        }
+        presetDrafts.delete(cur.id);
+        save(); fillPresets(); status('ifimgen_gen_status', t('st_preset_saved'), 'ok');
     });
     $('ifimgen_preset_saveas').addEventListener('click', async () => {
-        const name = await getContext().callGenericPopup('Preset name:', getContext().POPUP_TYPE.INPUT, '');
+        const name = await askPresetName('');
         if (!name) return;
         const p = createPreset({ name: String(name), system: presetText.value });
-        settings.data.presets.push(p); g.presetId = p.id; save(); fillPresets();
+        presetDrafts.delete(g.presetId); // the edited text now lives in the new preset
+        settings.data.presets.push(p); g.presetId = p.id; save(); fillPresets(); status('ifimgen_gen_status', t('st_preset_saved'), 'ok');
     });
     $('ifimgen_preset_delete').addEventListener('click', () => {
         const i = settings.data.presets.findIndex(p => p.id === g.presetId);
         if (i < 0) return;
+        presetDrafts.delete(g.presetId);
         settings.data.presets.splice(i, 1); g.presetId = BUILTIN_PRESETS[0].id; save(); fillPresets();
     });
     $('ifimgen_preset_export').addEventListener('click', () => downloadJson('ifimgen-presets.json', { app: 'IF_Imgen', kind: 'presets', items: settings.data.presets }));
@@ -598,7 +626,8 @@ function generatePanel() {
         <div class="ifimgen-box">
             ${boxTitle('brain', t('box_preset'))}
             <div class="ifimgen-row"><select id="ifimgen_preset" class="text_pole"></select>
-                ${btn({ id: 'ifimgen_preset_saveas', icon: 'save', title: t('btn_save_as') })}
+                ${btn({ id: 'ifimgen_preset_save', cls: 'primary', icon: 'save', title: t('btn_save_preset') })}
+                ${btn({ id: 'ifimgen_preset_saveas', icon: 'plus', title: t('btn_save_as') })}
                 ${btn({ id: 'ifimgen_preset_delete', cls: 'danger', icon: 'trash', title: t('btn_delete_preset') })}
                 ${btn({ id: 'ifimgen_preset_export', icon: 'download', title: t('btn_export_presets') })}
                 ${fileBtn({ inputId: 'ifimgen_preset_import', title: t('btn_import_presets') })}</div>
