@@ -67,8 +67,30 @@ export function createPreset(partial = {}) {
     };
 }
 
+/** Built-ins with the user's overrides applied (`overridden: true` when a saved text replaces the default), then user presets. */
 export function allPresets(settings) {
-    return [...BUILTIN_PRESETS, ...(settings.data.presets ?? [])];
+    const ov = settings.data.presetOverrides ?? {};
+    const builtins = BUILTIN_PRESETS.map(p => typeof ov[p.id] === 'string' ? { ...p, system: ov[p.id], overridden: true } : p);
+    return [...builtins, ...(settings.data.presets ?? [])];
+}
+
+/** Save `system` over a preset in place: built-in -> override entry, user preset -> its own record. */
+export function overwritePreset(settings, id, system) {
+    if (BUILTIN_PRESETS.some(p => p.id === id)) {
+        settings.data.presetOverrides ??= {};
+        const def = BUILTIN_PRESETS.find(p => p.id === id).system;
+        if (system === def) delete settings.data.presetOverrides[id]; else settings.data.presetOverrides[id] = system;
+        return true;
+    }
+    const own = (settings.data.presets ?? []).find(p => p.id === id);
+    if (!own) return false;
+    own.system = system;
+    return true;
+}
+
+/** Drop the override of a built-in preset (back to the shipped text). */
+export function resetPreset(settings, id) {
+    if (settings.data.presetOverrides) delete settings.data.presetOverrides[id];
 }
 
 export function findPreset(settings, id) {

@@ -55,7 +55,8 @@ export function defaultSettings() {
             collapseImages: true,       // chat images sit behind a small toggle button
             imageAlign: 'left',         // 'left' | 'center' | 'right' - where generated images sit in the chat bubble
         },
-        data: { characters: [], personas: [], styles: [], presets: [], testImages: [] },
+        // presetOverrides[builtinId] = system prompt saved over a built-in preset (Save = overwrite, no fork needed)
+        data: { characters: [], personas: [], styles: [], presets: [], presetOverrides: {}, testImages: [] },
         defaultStyleId: '',
     };
 }
