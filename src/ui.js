@@ -43,8 +43,8 @@ export function mountDrawer(deps) {
     };
 }
 
-function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, onLanguageChange, onCollapseChange }, openTab) {
-    root.innerHTML = markup();
+function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, version, onLanguageChange, onCollapseChange }, openTab) {
+    root.innerHTML = markup(version);
     const $ = id => root.querySelector(`#${id}`);
     const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; n.className = `ifimgen-status ${cls}`; };
 
@@ -469,7 +469,7 @@ function entityPanel({ kind, tab, label, icon, hint }) {
         <div class="ifimgen-box">
             ${boxTitle('user', t('box_identity'))}
             <div class="ifimgen-row"><label>${t('lbl_name')}</label><input class="text_pole ent-name" type="text"></div>
-            <div class="ifimgen-row"><label>${t('lbl_keyword')}</label><input class="text_pole ent-keyword" type="text" placeholder="lyna → $lyna · Dư Tô → $du_to"></div>
+            <div class="ifimgen-row"><label>${t('lbl_keyword')}</label><input class="text_pole ent-keyword" type="text" placeholder="lyna → $lyna"></div>
             <div class="ifimgen-row"><label>${t('lbl_aliases')}</label><input class="text_pole ent-aliases" type="text" placeholder="${escapeHtml(t('ph_aliases'))}"></div>
         </div>
         <div class="ifimgen-box">
@@ -664,12 +664,11 @@ function langSwitch() {
     </div>`;
 }
 
-function markup() {
+function markup(version) {
     const tabs = MAIN_TABS();
-    // Name + version live in the drawer header (index.js); only the language switch stays here.
     return `
     <div class="ifimgen">
-        <div class="ifimgen-title">${langSwitch()}</div>
+        <div class="ifimgen-title"><h3>IF Imgen</h3><small>v${escapeHtml(version)}</small>${langSwitch()}</div>
         <div class="ifimgen-tabs">
             ${tabs.map(tab => btn({ icon: tab.icon, label: tab.label, attrs: `data-tab="${tab.tab}"` })).join('')}
         </div>
@@ -710,6 +709,4 @@ function stylePanel({ tab, label, icon, hint }) {
         </div>
         <div class="ifimgen-status ent-status"></div>
     </div>`;
-}
-  </div>`;
 }

@@ -5,17 +5,9 @@
     --ifg-text: var(--SmartThemeBodyColor, #e6e6e6);
     display: flex; flex-direction: column; gap: 10px;
 }
-.ifimgen-title { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-
-/* ---- drawer header: name + version + blinking "new version" badge */
-.ifimgen-hdr-ver { opacity: .6; font-weight: 400; font-size: .8em; margin-left: 6px; }
-.ifimgen-hdr-update {
-    display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px;
-    font-size: .72em; font-weight: 600; line-height: 1.5; background: #f7768e; color: #fff; cursor: pointer;
-    animation: ifimgen-blink 1.2s ease-in-out infinite;
-}
-.ifimgen-hdr-update[hidden] { display: none; }
-@keyframes ifimgen-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.ifimgen-title { display: flex; align-items: baseline; gap: 8px; }
+.ifimgen-title h3 { margin: 0; }
+.ifimgen-title small { opacity: .6; }
 
 /* ---- buttons: fixed size, SVG icon, high-contrast press state */
 .ifimgen-ico { width: 16px; height: 16px; flex: 0 0 16px; pointer-events: none; }
