@@ -201,6 +201,26 @@ test('planner rules mention detail tokens', () => {
     assert.ok(system.includes('DETAILS:') && system.includes('$yenka.back'));
 });
 
+test('binding: chat id / card avatar / persona avatar / always -- identifiers only', () => {
+    const e = createEntity('characters', { name: 'B', bind: { chats: ['Lyna - 2026-09-01@10h.jsonl'], characters: ['lyna.png'] } });
+    assert.ok(isBound(e, { chatId: 'Lyna - 2026-09-01@10h.jsonl' }));
+    assert.ok(isBound(e, { charAvatar: 'lyna.png' }));
+    assert.ok(!isBound(e, { chatId: 'other.jsonl', charAvatar: 'other.png' }));
+    assert.ok(isBound(createEntity('styles', { name: 'S', bind: { always: true } }), {}));
+    const r = resolveEntities(s, { text: 'no keywords here', chatId: 'x.jsonl', charAvatar: 'nobody.png' });
+    assert.equal(r.characters.length, 0, 'unbound chat + unbound card -> nothing auto-attached');
+    assert.deepEqual(createEntity('characters', { name: 'L', bind: { characters: ['a.png'] } }).bind.chats, [], 'legacy entity without bind.chats still loads');
+});
+
+test('LLM isolation: raw request (no preset/instruct merge), no card fields read anywhere', () => {
+    const llm = readFileSync(new URL('../src/llm.js', import.meta.url), 'utf8');
+    assert.ok(/includePreset:\s*false/.test(llm) && /includeInstruct:\s*false/.test(llm), 'profile request must not merge ST prompt preset');
+    const src = ['pipeline', 'entities', 'scene', 'prompt', 'presets', 'llm', 'gallery', 'ui'].map(f => readFileSync(new URL('../src/' + f + '.js', import.meta.url), 'utf8')).join(String.fromCharCode(10));
+    for (const field of ['description', 'personality', 'scenario', 'first_mes', 'mes_example', 'creator_notes', 'system_prompt', 'post_history_instructions', 'depth_prompt', 'character_book', 'world_info']) {
+        assert.ok(!new RegExp('\\.' + field + '\\b').test(src), 'card field "' + field + '" must never be read');
+    }
+});
+
 test('import/export roundtrip + keyword dedupe', () => {
     const list = [];
     const r = importEntities('characters', list, exportEntities('characters', [lyna]));

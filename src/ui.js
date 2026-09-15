@@ -10,8 +10,8 @@ import { mountGallery, galleryMarkup, createViewer } from './gallery.js';
 import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM } from './scene.js';
 
 const ENTITY_TABS = [
-    { kind: 'characters', tab: 'chars', label: 'Characters', icon: 'users', hint: 'Bind to ST character cards. Mentioned in plan via $keyword.' },
-    { kind: 'personas', tab: 'personas', label: 'Personas', icon: 'user', hint: 'Your user personas. Bind to ST persona avatars.' },
+    { kind: 'characters', tab: 'chars', label: 'Characters', icon: 'users', hint: 'Visual definitions written here are the ONLY source for the image prompt (nothing is read from the ST card). Bind = auto-load in a chat / card. Referenced in plan via $keyword.' },
+    { kind: 'personas', tab: 'personas', label: 'Personas', icon: 'user', hint: 'Your visual persona definitions. Bind = auto-load in a chat / card / ST persona; the ST persona description itself is never used.' },
     { kind: 'styles', tab: 'styles', label: 'Styles', icon: 'palette', hint: 'One style per image: bound style > keyword > default.' },
 ];
 // Tab order: configure everything first, Generate last.
@@ -289,25 +289,46 @@ ${negative || '(disabled / empty)'}`;
             q('.ent-always').checked = e.bind.always;
             renderBind(e);
         }
+        // Working copy of the binding lists while editing (committed on Save).
+        let bindState = { chats: [], characters: [], personas: [] };
+        const currentChatId = () => { const ctx = getContext(); return String((typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? ''); };
+        // Only identifiers + display names are taken from ST here (avatar filename, card name, persona key).
+        const cardList = () => (getContext().characters ?? []).map(ch => ({ id: ch.avatar, name: ch.name || ch.avatar }));
+        const personaList = () => Object.entries(getContext().powerUserSettings?.personas ?? {}).map(([id, name]) => ({ id, name: name || id }));
         function renderBind(e) {
-            const ctx = getContext();
-            const chars = (ctx.characters ?? []).map(ch => ({ id: ch.avatar, name: ch.name }));
-            const personas = Object.entries(ctx.powerUserSettings?.personas ?? {}).map(([id, name]) => ({ id, name: name || id }));
-            const box = (items, key) => items.map(it => `<label><input type="checkbox" data-bind="${key}" value="${escapeHtml(it.id)}" ${e.bind[key].includes(it.id) ? 'checked' : ''}> ${escapeHtml(it.name)}</label>`).join('') || '<span class="ifimgen-note">none</span>';
-            q('.ent-bind-chars').innerHTML = box(chars, 'characters');
-            q('.ent-bind-personas').innerHTML = box(personas, 'personas');
+            if (e) bindState = { chats: [...e.bind.chats], characters: [...e.bind.characters], personas: [...e.bind.personas] };
+            const chatId = currentChatId();
+            const boundHere = Boolean(chatId) && bindState.chats.includes(chatId);
+            q('.ent-bind-chat-name').textContent = chatId ? `${boundHere ? 'Bound to' : 'Not bound to'}: ${chatId}${bindState.chats.length > 1 || (bindState.chats.length === 1 && !boundHere) ? ` (+${bindState.chats.length - (boundHere ? 1 : 0)} other chat(s))` : ''}` : 'No chat open.';
+            const tog = q('.ent-bind-chat-toggle');
+            tog.classList.toggle('active', boundHere);
+            tog.querySelector('span').textContent = boundHere ? 'Unbind this chat' : 'Bind this chat';
+            tog.disabled = !chatId;
+            const chips = (ids, all, key) => ids.map(id => `<span class="ifimgen-chip bound" title="${escapeHtml(id)}">${escapeHtml(all.find(x => x.id === id)?.name ?? id)}<span class="ifimgen-chip-x" data-unbind="${key}" data-id="${escapeHtml(id)}">&times;</span></span>`).join('') || '<span class="ifimgen-note">none</span>';
+            const cards = cardList(), pers = personaList();
+            q('.ent-bind-chars').innerHTML = chips(bindState.characters, cards, 'characters');
+            q('.ent-bind-personas').innerHTML = chips(bindState.personas, pers, 'personas');
+            fillSelect(q('.ent-bind-char-select'), cards.filter(c => !bindState.characters.includes(c.id)).map(c => ({ value: c.id, label: c.name })), '', '-- all cards bound / none --');
+            fillSelect(q('.ent-bind-persona-select'), pers.filter(p => !bindState.personas.includes(p.id)).map(p => ({ value: p.id, label: p.name })), '', '-- none --');
         }
+        q('.ent-bind-chat-toggle').addEventListener('click', () => {
+            const id = currentChatId(); if (!id) return;
+            bindState.chats = bindState.chats.includes(id) ? bindState.chats.filter(x => x !== id) : [...bindState.chats, id];
+            renderBind(null);
+        });
+        q('.ent-bind-char-add').addEventListener('click', () => { const v = q('.ent-bind-char-select').value; if (v && !bindState.characters.includes(v)) { bindState.characters.push(v); renderBind(null); } });
+        q('.ent-bind-persona-add').addEventListener('click', () => { const v = q('.ent-bind-persona-select').value; if (v && !bindState.personas.includes(v)) { bindState.personas.push(v); renderBind(null); } });
+        panel.addEventListener('click', ev => {
+            const x = ev.target.closest('[data-unbind]'); if (!x) return;
+            const key = x.dataset.unbind; bindState[key] = bindState[key].filter(id => id !== x.dataset.id); renderBind(null);
+        });
         function read() {
             const base = list().find(e => e.id === currentId);
             return createEntity(kind, {
                 id: base?.id, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
                 aliases: q('.ent-aliases').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value,
                 negative: q('.ent-negative').value, facets: q('.ent-facets')?.value ?? '', loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
-                bind: {
-                    always: q('.ent-always').checked,
-                    characters: [...panel.querySelectorAll('[data-bind="characters"]:checked')].map(x => x.value),
-                    personas: [...panel.querySelectorAll('[data-bind="personas"]:checked')].map(x => x.value),
-                },
+                bind: { always: q('.ent-always').checked, chats: [...bindState.chats], characters: [...bindState.characters], personas: [...bindState.personas] },
             });
         }
         q('.ent-select').addEventListener('change', e => { currentId = e.target.value; load(list().find(x => x.id === currentId)); refreshList(); });
@@ -386,10 +407,17 @@ function entityPanel({ kind, tab, label, icon, hint }) {
             <div class="ifimgen-row"><label>LoRA position</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>
         </div>
         <div class="ifimgen-box">
-            ${boxTitle('plug', 'Bind')}
+            ${boxTitle('plug', 'Bind — auto-load when opened')}
+            <div class="ifimgen-note">Binding only links this entry to a chat / card / persona so it loads automatically. Nothing is read from the card itself.</div>
+            <div class="ifimgen-row"><label>This chat</label>
+                <div class="ifimgen-bind-cur"><span class="ent-bind-chat-name ifimgen-note"></span>${btn({ cls: 'ent-bind-chat-toggle', icon: 'plug', label: 'Bind this chat' })}</div></div>
+            <div class="ifimgen-row"><label>Character cards</label>
+                <div class="ifimgen-bind-pick"><select class="text_pole ent-bind-char-select"></select>${btn({ cls: 'ent-bind-char-add', icon: 'plus', title: 'Add card' })}</div></div>
+            <div class="ifimgen-row"><label></label><div class="ifimgen-list ent-bind-chars"></div></div>
+            <div class="ifimgen-row"><label>ST personas</label>
+                <div class="ifimgen-bind-pick"><select class="text_pole ent-bind-persona-select"></select>${btn({ cls: 'ent-bind-persona-add', icon: 'plus', title: 'Add persona' })}</div></div>
+            <div class="ifimgen-row"><label></label><div class="ifimgen-list ent-bind-personas"></div></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-always"> Always active (every chat)</label></div>
-            <div class="ifimgen-row"><label>ST characters</label><div class="ifimgen-bind ent-bind-chars"></div></div>
-            <div class="ifimgen-row"><label>ST personas</label><div class="ifimgen-bind ent-bind-personas"></div></div>
         </div>
         <div class="ifimgen-row">
             ${btn({ cls: 'ent-save primary', icon: 'save', label: 'Save' })}

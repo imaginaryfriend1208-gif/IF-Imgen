@@ -12,10 +12,16 @@ import { clamp } from './util.js';
 export function createPipeline({ settings, getContext, backends, llm, saveImage, log = () => {}, onChange = () => {} }) {
     const inflight = new Map(); // messageId -> AbortController
 
+    /**
+     * Identity of the open chat, used ONLY to decide which IF Imgen entities are
+     * bound (auto-loaded). Avatar filenames / chat id are opaque identifiers;
+     * no card text (description, personality, scenario...) is ever read.
+     */
     function chatIdentity(ctx) {
+        const chatId = (typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? '';
         const charAvatar = ctx.characters?.[ctx.characterId]?.avatar ?? '';
         const personaAvatar = ctx.powerUserSettings?.persona_avatar ?? ctx.userAvatar ?? '';
-        return { charAvatar, personaAvatar };
+        return { chatId: String(chatId), charAvatar, personaAvatar };
     }
 
     function contextText(ctx, messageId, k) {

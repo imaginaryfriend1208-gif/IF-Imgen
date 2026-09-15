@@ -1,4 +1,11 @@
 // IF Imgen - single LLM target: ST connection profile OR custom OpenAI-compatible.
+//
+// ISOLATION GUARANTEE: the LLM receives ONLY the messages IF Imgen builds
+// (planner/refine system text + chat paragraphs + entity roster). The request is
+// sent RAW: includePreset=false / includeInstruct=false so SillyTavern does not
+// merge the profile's prompt preset (which would carry the character card,
+// persona description, world info, author's note...). Nothing is read from the
+// character card at any point.
 
 export function createLlm({ settings, getContext }) {
     const cfg = () => settings.connection.llm;
@@ -14,7 +21,11 @@ export function createLlm({ settings, getContext }) {
         const ctx = getContext();
         const id = cfg().profileId;
         if (!id) throw new Error('No SillyTavern connection profile selected.');
-        const res = await ctx.ConnectionManagerRequestService.sendRequest(id, messages, cfg().maxTokens, { signal, extractData: true, includePreset: true, includeInstruct: true });
+        const res = await ctx.ConnectionManagerRequestService.sendRequest(
+            id, messages, cfg().maxTokens,
+            { signal, extractData: true, includePreset: false, includeInstruct: false },
+            { temperature: cfg().temperature },
+        );
         if (typeof res === 'string') return res;
         return res?.content ?? '';
     }

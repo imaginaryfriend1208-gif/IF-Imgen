@@ -18,9 +18,12 @@ export function createEntity(kind, partial = {}) {
         facets: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.facets), // [{key:'back', text:'...'}] referenced as $keyword.back
         loras: splitList(partial.loras),               // ["<lora:x:0.8>", ...]
         loraPosition: LORA_POSITIONS.includes(partial.loraPosition) ? partial.loraPosition : 'front',
+        // Binding = "auto-load this entity when that chat / card / persona is open".
+        // Only identifiers are stored. Nothing is ever read FROM the card or persona.
         bind: {
-            characters: splitList(partial.bind?.characters), // ST card avatar filenames
-            personas: splitList(partial.bind?.personas),     // ST persona avatar filenames
+            chats: splitList(partial.bind?.chats),           // ST chat ids (getCurrentChatId)
+            characters: splitList(partial.bind?.characters), // ST card avatar filenames (identity only)
+            personas: splitList(partial.bind?.personas),     // ST persona avatar filenames (identity only)
             always: Boolean(partial.bind?.always),
         },
         updatedAt: Date.now(),
@@ -67,8 +70,9 @@ export function matchByKeyword(list, text) {
     return out;
 }
 
-export function isBound(e, { charAvatar, personaAvatar } = {}) {
+export function isBound(e, { chatId, charAvatar, personaAvatar } = {}) {
     if (e.bind?.always) return true;
+    if (chatId && e.bind?.chats?.includes(chatId)) return true;
     if (charAvatar && e.bind?.characters?.includes(charAvatar)) return true;
     if (personaAvatar && e.bind?.personas?.includes(personaAvatar)) return true;
     return false;
@@ -83,15 +87,15 @@ export function isBound(e, { charAvatar, personaAvatar } = {}) {
  * must not be stamped onto a solo scene.
  * Style: bound style > keyword > defaultStyleId > none.
  */
-export function resolveEntities(settings, { text, charAvatar, personaAvatar }) {
+export function resolveEntities(settings, { text, chatId, charAvatar, personaAvatar }) {
     const d = settings.data;
     const byKeyChars = matchByKeyword(d.characters, text);
     const byKeyPersonas = matchByKeyword(d.personas, text);
     const anyKeyword = byKeyChars.length + byKeyPersonas.length > 0;
-    const bound = list => list.filter(e => isBound(e, { charAvatar, personaAvatar }));
+    const bound = list => list.filter(e => isBound(e, { chatId, charAvatar, personaAvatar }));
     const characters = anyKeyword ? byKeyChars : bound(d.characters);
     const personas = anyKeyword ? byKeyPersonas : bound(d.personas);
-    const style = d.styles.find(e => isBound(e, { charAvatar, personaAvatar }))
+    const style = d.styles.find(e => isBound(e, { chatId, charAvatar, personaAvatar }))
         ?? matchByKeyword(d.styles, text)[0]
         ?? d.styles.find(e => e.id === settings.defaultStyleId)
         ?? null;
@@ -99,15 +103,16 @@ export function resolveEntities(settings, { text, charAvatar, personaAvatar }) {
 }
 
 /** Roster text handed to the planner LLM (keyword, who they are, available $keyword.detail tokens). */
-export function rosterText(settings, { charAvatar, personaAvatar }) {
+export function rosterText(settings, { chatId, charAvatar, personaAvatar }) {
+    const ident = { chatId, charAvatar, personaAvatar };
     const lines = [];
     const add = (label, list) => { for (const e of list) lines.push(rosterLine(e, label)); };
     const d = settings.data;
-    add('character', d.characters.filter(e => isBound(e, { charAvatar, personaAvatar })));
-    add('user persona', d.personas.filter(e => isBound(e, { charAvatar, personaAvatar })));
+    add('character', d.characters.filter(e => isBound(e, ident)));
+    add('user persona', d.personas.filter(e => isBound(e, ident)));
     // Unbound ones are still listed by keyword so the LLM can mention them.
-    add('character', d.characters.filter(e => !isBound(e, { charAvatar, personaAvatar })));
-    add('user persona', d.personas.filter(e => !isBound(e, { charAvatar, personaAvatar })));
+    add('character', d.characters.filter(e => !isBound(e, ident)));
+    add('user persona', d.personas.filter(e => !isBound(e, ident)));
     return lines.join(String.fromCharCode(10));
 }
 
