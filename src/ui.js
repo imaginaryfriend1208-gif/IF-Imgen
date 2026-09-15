@@ -6,7 +6,7 @@ import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
 import { PARAM_KEYS } from './settings.js';
 import { modelParams, hasProfile } from './prompt.js';
 import { ICONS, btn, fileBtn } from './icons.js';
-import { mountGallery, galleryMarkup } from './gallery.js';
+import { mountGallery, galleryMarkup, createViewer } from './gallery.js';
 
 const ENTITY_TABS = [
     { kind: 'characters', tab: 'chars', label: 'Characters', icon: 'users', hint: 'Bind to ST character cards. Mentioned in plan via $keyword.' },
@@ -25,7 +25,7 @@ const BACKENDS = [
     { id: 'nai', label: 'NovelAI', icon: 'cloud' },
 ];
 
-export function mountDrawer({ root, settings, save, backends, llm, pipeline, getContext, version }) {
+export function mountDrawer({ root, settings, save, backends, llm, pipeline, getContext, viewer, version }) {
     root.innerHTML = markup(version);
     const $ = id => root.querySelector(`#${id}`);
     const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; n.className = `ifimgen-status ${cls}`; };
@@ -215,6 +215,20 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
         } catch (err) { status('ifimgen_gen_status', err.message, 'error'); }
         e.target.value = '';
     });
+    $('ifimgen_preview').addEventListener('click', () => {
+        const scene = $('ifimgen_preview_scene').value.trim() || '$keyword does something in a place';
+        const { prompt, negative, ents } = pipeline.compilePreview(scene);
+        $('ifimgen_preview_out').textContent =
+            `[characters] ${ents.characters.map(e => e.name).join(', ') || '-'}
+[personas] ${ents.personas.map(e => e.name).join(', ') || '-'}
+[style] ${ents.style?.name ?? '-'}
+
+PROMPT:
+${prompt}
+
+NEGATIVE:
+${negative || '(disabled / empty)'}`;
+    });
     $('ifimgen_run_last').addEventListener('click', async () => {
         const ctx = getContext();
         let id = ctx.chat.length - 1;
@@ -281,7 +295,9 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
             if (!e.name) return setStatus('Name is required.', 'error');
             const dup = list().find(x => x.keyword === e.keyword && x.id !== e.id);
             if (dup) return setStatus(`Keyword "$${e.keyword}" already used by "${dup.name}".`, 'error');
-            upsertEntity(list(), e); currentId = e.id; save(); refreshList(); setStatus(`Saved "${e.name}" as $${e.keyword}.`, 'ok');
+            upsertEntity(list(), e); currentId = e.id; save(); refreshList();
+            const empty = !e.tags && !e.natural && !e.loras.length;
+            setStatus(`Saved "${e.name}" as $${e.keyword}.${empty ? ' Warning: no tags / natural description / LoRA — this entry adds nothing to the prompt.' : ''}`, empty ? 'error' : 'ok');
         });
         q('.ent-delete').addEventListener('click', () => {
             if (!currentId) return;
@@ -304,7 +320,7 @@ export function mountDrawer({ root, settings, save, backends, llm, pipeline, get
     }
 
     // ============================================================ Gallery
-    const gallery = mountGallery({ panel: root.querySelector('[data-panel="gallery"]'), getContext });
+    const gallery = mountGallery({ panel: root.querySelector('[data-panel="gallery"]'), getContext, viewer });
 
     return { refresh() { fillModels(); fillPresets(); gallery.refresh(); }, refreshGallery: () => gallery.refresh() };
 }
@@ -453,6 +469,12 @@ function generatePanel() {
             <div class="ifimgen-note">Untick Negative for models that ignore it (e.g. Krea); entity negatives are skipped as well.</div>
             <h4>Overrides (0 = use model profile)</h4>
             <div class="ifimgen-grid2">${numRow('ifimgen_ov_steps', 'Steps', 0, 150)}${numRow('ifimgen_ov_cfg', 'CFG', 0, 30, 0.5)}${numRow('ifimgen_ov_width', 'Width', 0, 2048, 64)}${numRow('ifimgen_ov_height', 'Height', 0, 2048, 64)}</div>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('locate', 'Prompt preview')}
+            <div class="ifimgen-row"><input id="ifimgen_preview_scene" class="text_pole" type="text" placeholder="$rosario sews a wound on $yenka's side, dim bedroom, lamp light">${btn({ id: 'ifimgen_preview', icon: 'locate', label: 'Compile' })}</div>
+            <pre id="ifimgen_preview_out" class="ifimgen-pre"></pre>
+            <div class="ifimgen-note">Shows exactly which characters / personas / style are attached and the final prompt the backend receives.</div>
         </div>
         <div class="ifimgen-row">${btn({ id: 'ifimgen_run_last', cls: 'primary', icon: 'play', label: 'Generate for last reply' })}<span id="ifimgen_gen_status" class="ifimgen-status"></span></div>
     </div>`;

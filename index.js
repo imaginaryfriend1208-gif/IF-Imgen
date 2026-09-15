@@ -11,8 +11,9 @@ import { createBackends } from './src/backends.js';
 import { createLlm } from './src/llm.js';
 import { createPipeline } from './src/pipeline.js';
 import { mountDrawer } from './src/ui.js';
+import { createViewer, collectChatImages } from './src/gallery.js';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);
@@ -28,6 +29,19 @@ async function saveImage(b64, charName) {
 
 let drawer = null;
 const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, log: LOG, onChange: () => drawer?.refreshGallery() });
+const viewer = createViewer({ getContext, pipeline, onChanged: () => drawer?.refreshGallery() });
+
+// Click an IF Imgen image inside the chat -> viewer with regenerate / edit / delete.
+document.addEventListener('click', e => {
+    const img = e.target instanceof HTMLImageElement && e.target.alt === 'IF Imgen' && e.target.closest('#chat .mes_text') ? e.target : null;
+    if (!img) return;
+    e.preventDefault(); e.stopPropagation();
+    const items = collectChatImages(getContext().chat);
+    const url = new URL(img.getAttribute('src'), location.href).pathname;
+    const i = items.findIndex(it => it.url === url || it.url === img.getAttribute('src'));
+    if (i < 0) return toastr.warning('Image not found in chat data. Reload the chat.', 'IF Imgen');
+    viewer.open(items, i);
+}, true);
 
 // ---- per-message button
 function addMessageButton(messageId) {
@@ -38,7 +52,7 @@ function addMessageButton(messageId) {
     if (!bar || bar.querySelector('.ifimgen_msg_btn')) return;
     const btn = document.createElement('div');
     btn.className = 'mes_button ifimgen_msg_btn fa-solid fa-images';
-    btn.title = 'IF Imgen: generate images for this message (Shift+click: remove images)';
+    btn.title = 'IF Imgen: generate images for this message (again = regenerate all; Shift+click: remove images). Click an image to regenerate just that one.';
     btn.addEventListener('click', async e => {
         const id = Number(btn.closest('.mes')?.getAttribute('mesid'));
         if (e.shiftKey) return pipeline.clear(id);
@@ -72,7 +86,7 @@ eventSource.on(event_types.GENERATION_ENDED, async () => {
         if (r?.skipped && r.skipped !== 'already has images') LOG('skipped:', r.skipped);
     } catch (e) { toastr.error(e.message, 'IF Imgen'); }
 });
-eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); setTimeout(() => { addAllButtons(); drawer?.refreshGallery(); }, 300); });
+eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); drawer?.refreshGallery(); }, 300); });
 eventSource.on(event_types.MESSAGE_DELETED, () => drawer?.refreshGallery());
 eventSource.on(event_types.MESSAGE_EDITED, () => drawer?.refreshGallery());
 eventSource.on(event_types.MESSAGE_SWIPED, () => drawer?.refreshGallery());
@@ -107,7 +121,8 @@ jQuery(async () => {
             <div class="inline-drawer-content" id="ifimgen_root"></div>
         </div>`;
     host.appendChild(wrap);
-    drawer = mountDrawer({ root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, version: VERSION });
+    drawer = mountDrawer({ root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, version: VERSION });
+    try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
     addAllButtons();
     LOG(`v${VERSION} loaded (settings ns: ${MODULE})`);
 });

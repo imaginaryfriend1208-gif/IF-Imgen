@@ -38,11 +38,19 @@ export function safeImageUrl(url) {
         .replace(/\)/g, '%29');
 }
 
-/** Markdown snippet for one generated image. */
-export function imageSnippet(url, title = '') {
-    const safeTitle = String(title).replace(/["\n]/g, ' ').slice(0, 300);
-    return `${IMG_MARK}\n![IF Imgen](${safeImageUrl(url)} "${safeTitle}")`;
+/**
+ * Markdown snippet for one generated image. No title attribute on purpose:
+ * SillyTavern wraps every "quoted" run in <q> BEFORE markdown runs, which turns
+ * ![..](url "title") into plain text. Prompts live in message.extra.ifimgen instead.
+ */
+export function imageSnippet(url) {
+    return `${IMG_MARK}\n![IF Imgen](${safeImageUrl(url)})`;
 }
+
+// Matches both the bare form and the legacy form with a "title".
+// URL part is lazy and may contain spaces (v0.1 wrote raw paths).
+const IMG_RE_SRC = '!\\[IF Imgen\\]\\(\\s*([^)"]+?)\\s*(?:"([^"]*)")?\\s*\\)';
+const escapeRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Insert snippets after the given paragraphs. Applies from the last paragraph
@@ -62,20 +70,47 @@ export function insertAfterParagraphs(mes, paragraphs, inserts) {
     return s;
 }
 
-/** Remove every IF Imgen image block from a message. */
+const collapse = s => s.replace(/\n{3,}/g, '\n\n');
+
+/** Remove every IF Imgen image block from a message (bare and legacy title form). */
 export function stripImages(mes) {
-    return String(mes ?? '')
-        .replace(new RegExp(`\\n*${IMG_MARK}\\n!\\[IF Imgen\\]\\([^)]*\\)`, 'g'), '')
-        .replace(/\n{3,}/g, '\n\n');
+    return collapse(String(mes ?? '').replace(new RegExp(`\\n*${IMG_MARK}\\n${IMG_RE_SRC}`, 'g'), ''));
+}
+
+/** Remove one image block by URL. */
+export function removeImageByUrl(mes, url) {
+    return collapse(String(mes ?? '').replace(new RegExp(`\\n*${IMG_MARK}\\n!\\[IF Imgen\\]\\(\\s*${escapeRe(url)}\\s*(?:"[^"]*")?\\s*\\)`, 'g'), ''));
+}
+
+/** Swap one image URL for another in place (regenerate keeps the position). */
+export function replaceImageUrl(mes, oldUrl, newUrl) {
+    return String(mes ?? '').replace(new RegExp(`(!\\[IF Imgen\\]\\(\\s*)${escapeRe(oldUrl)}(\\s*(?:"[^"]*")?\\s*\\))`), `$1${safeImageUrl(newUrl)}$2`);
 }
 
 /**
- * All IF Imgen images in a message (also tolerates legacy URLs containing spaces).
+ * Legacy (v0.1/v0.2) snippets carried the prompt as a markdown title, which never
+ * rendered. Convert them to the bare form and hand back the recovered titles so the
+ * caller can move them into message.extra.
+ * @returns {{ mes:string, changed:boolean, recovered:{url:string,title:string}[] }}
+ */
+export function migrateLegacyImages(mes) {
+    const recovered = [];
+    const out = String(mes ?? '').replace(new RegExp(IMG_RE_SRC, 'g'), (m, url, title) => {
+        const safe = safeImageUrl(url);
+        if (title === undefined && safe === url) return m;
+        recovered.push({ url: safe, title: title ?? '' });
+        return `![IF Imgen](${safe})`;
+    });
+    return { mes: out, changed: recovered.length > 0, recovered };
+}
+
+/**
+ * All IF Imgen images in a message, in order.
  * @returns {{url:string,title:string}[]}
  */
 export function listImages(mes) {
     const out = [];
-    const re = /!\[IF Imgen\]\(([^)"]+?)\s*(?:"([^"]*)")?\)/g;
+    const re = new RegExp(IMG_RE_SRC, 'g');
     let m;
     while ((m = re.exec(String(mes ?? '')))) out.push({ url: m[1].trim(), title: m[2] ?? '' });
     return out;

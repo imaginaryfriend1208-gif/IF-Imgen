@@ -74,20 +74,22 @@ export function isBound(e, { charAvatar, personaAvatar } = {}) {
 
 /**
  * Resolve which entities apply to one image prompt.
- * Characters/personas: bound to current chat OR mentioned by keyword in text.
- * Style: first bound style, else defaultStyleId, else none.
+ * Characters/personas: mentioned by $keyword in the planner text. If the planner
+ * named nobody at all, fall back to the entities bound to this chat (so a prompt
+ * with no keywords still gets the current character). Bound entities that are NOT
+ * mentioned are dropped when at least one keyword matched -- a two-person roster
+ * must not be stamped onto a solo scene.
+ * Style: bound style > keyword > defaultStyleId > none.
  */
 export function resolveEntities(settings, { text, charAvatar, personaAvatar }) {
     const d = settings.data;
-    const pick = list => {
-        const byKey = matchByKeyword(list, text);
-        const bound = list.filter(e => isBound(e, { charAvatar, personaAvatar }));
-        const seen = new Set();
-        return [...byKey, ...bound].filter(e => !seen.has(e.id) && seen.add(e.id));
-    };
-    const characters = pick(d.characters);
-    const personas = pick(d.personas);
-    let style = d.styles.find(e => isBound(e, { charAvatar, personaAvatar }))
+    const byKeyChars = matchByKeyword(d.characters, text);
+    const byKeyPersonas = matchByKeyword(d.personas, text);
+    const anyKeyword = byKeyChars.length + byKeyPersonas.length > 0;
+    const bound = list => list.filter(e => isBound(e, { charAvatar, personaAvatar }));
+    const characters = anyKeyword ? byKeyChars : bound(d.characters);
+    const personas = anyKeyword ? byKeyPersonas : bound(d.personas);
+    const style = d.styles.find(e => isBound(e, { charAvatar, personaAvatar }))
         ?? matchByKeyword(d.styles, text)[0]
         ?? d.styles.find(e => e.id === settings.defaultStyleId)
         ?? null;

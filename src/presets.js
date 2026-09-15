@@ -2,17 +2,22 @@
 import { uuid } from './util.js';
 
 const OUTPUT_RULES = `
+
+WHAT YOU WRITE: an image prompt is a description of the SCENE in that paragraph -- who is present, what each person is doing, pose, expression, clothing state, where they are, lighting, camera angle/shot type. It is NOT a character sheet.
+
+CAST: the ROSTER lists known people as $keyword with a short description so you can recognise them in the text. Their looks are attached automatically later, so NEVER re-describe their fixed appearance (hair, eyes, body, face, height). Mention each person present ONLY as their $keyword once, then describe what they are doing. If a paragraph has two people, mention both keywords and describe both. If a paragraph has no roster person, describe the scene without keywords.
+
 OUTPUT FORMAT (strict): reply with ONLY a JSON array, no prose, no markdown fence:
 [{"p": <paragraph number>, "prompt": "<image prompt>"}]
 - "p" must be one of the paragraph numbers listed. Pick the most visual moments.
 - Produce exactly {{count}} objects unless fewer paragraphs are usable.
-- Never include character appearance tags that are already provided by the roster; describe pose, action, expression, clothing state, camera, setting, lighting.
-- Refer to roster entities by their exact KEYWORD (e.g. $lyna) at the start of the prompt so the compiler can attach their tags.
-- {{dialect_rule}}`;
+- {{dialect_rule}}
+
+EXAMPLE (roster has $mara and $tomas): [{"p": 3, "prompt": "$mara sits on the edge of a bed, leaning forward, sleeves rolled up, sewing a wound on $tomas's side with steady hands; $tomas lies back with eyes closed; dim bedroom, single lamp on a nightstand, warm low light, medium shot from the foot of the bed"}]`;
 
 const DIALECT_RULES = {
-    tags: 'Write comma-separated danbooru-style tags (lowercase, spaces not underscores), 15-35 tags, most important first. No sentences.',
-    natural: 'Write one vivid natural-language paragraph of 40-70 words, subject first, then action, setting, lighting, camera. No tag lists.',
+    tags: 'Write comma-separated danbooru-style tags (lowercase, spaces not underscores), 15-35 tags, most important first: count tags (1girl, 2boys), $keywords, actions, poses, expressions, clothing state, setting, lighting, camera. No sentences.',
+    natural: 'Write ONE vivid natural-language paragraph of 40-80 words: subject(s) and action first, then setting, lighting, camera. No tag lists, no headings.',
 };
 
 export const BUILTIN_PRESETS = [
@@ -78,10 +83,10 @@ export function renderPlannerPrompt(preset, a) {
         .replaceAll('{{dialect_rule}}', DIALECT_RULES[a.dialect] ?? DIALECT_RULES.tags);
     const paraBlock = a.paragraphs.map(p => `[${p.index}] ${p.text}`).join('\n\n');
     const user = [
-        a.roster ? `ROSTER (keyword -> who they are):\n${a.roster}` : 'ROSTER: (none)',
+        a.roster ? `ROSTER (keyword -> who they are; looks are added automatically, do not repeat them):\n${a.roster}` : 'ROSTER: (none)',
         a.context ? `EARLIER CONTEXT:\n${a.context}` : '',
         `LATEST REPLY, NUMBERED PARAGRAPHS:\n${paraBlock}`,
-        `Choose ${a.count} paragraph(s) and reply with the JSON array only.`,
+        `Choose ${a.count} paragraph(s), describe the SCENE of each (actions, poses, setting, lighting, camera), and reply with the JSON array only.`,
     ].filter(Boolean).join('\n\n');
     return { system, user };
 }

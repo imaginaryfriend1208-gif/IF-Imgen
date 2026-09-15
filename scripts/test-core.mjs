@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // IF Imgen - pure-module tests (no DOM, no ST). Run: node scripts/test-core.mjs
 import assert from 'node:assert/strict';
-import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, listImages, safeImageUrl, IMG_MARK } from '../src/paragraphs.js';
+import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
 import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
 import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
@@ -63,18 +63,30 @@ test('matchByKeyword: $keyword, alias, diacritics, underscore~space, no partial'
     assert.equal(matchByKeyword([lyna], 'lynazor').length, 0);
 });
 
-test('resolveEntities: keyword + binding + default style', () => {
+test('resolveEntities: no keyword -> bound entities; keyword -> only the named ones; default style', () => {
     const r = resolveEntities(s, { text: 'a quiet room', charAvatar: 'lyna.png', personaAvatar: 'x' });
-    assert.equal(r.characters[0].id, lyna.id);
+    assert.equal(r.characters[0].id, lyna.id, 'bound char used when planner named nobody');
     assert.equal(r.personas[0].id, me.id);
     assert.equal(r.style.id, style.id);
     const r2 = resolveEntities(s, { text: 'a quiet room', charAvatar: 'other.png' });
     assert.equal(r2.characters.length, 0);
+    // two-person roster, planner mentions only $lyna -> the always-bound persona must NOT be stamped on
+    const solo = resolveEntities(s, { text: '$lyna sleeps alone', charAvatar: 'lyna.png' });
+    assert.equal(solo.characters.length, 1); assert.equal(solo.personas.length, 0);
+    const both = resolveEntities(s, { text: '$lyna leans on $me', charAvatar: 'lyna.png' });
+    assert.equal(both.characters.length, 1); assert.equal(both.personas.length, 1);
+});
+
+test('planner prompt tells the LLM to describe the scene, not the character sheet', () => {
+    const { system } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '$a — character: A', context: '', dialect: 'natural' });
+    assert.ok(/NOT a character sheet/i.test(system));
+    assert.ok(/NEVER re-describe/i.test(system));
+    assert.ok(system.includes('EXAMPLE'));
 });
 
 test('compilePrompt order: front lora, quality, style, after_style lora, char, persona, scene; NAI strips lora', () => {
-    const ents = resolveEntities(s, { text: '$lyna sits by the window', charAvatar: 'lyna.png' });
-    const { prompt, negative } = compilePrompt({ scene: '$lyna sits by the window', ...ents, settings: s, backend: 'sd' });
+    const ents = resolveEntities(s, { text: '$lyna sits by the window next to $me', charAvatar: 'lyna.png' });
+    const { prompt, negative } = compilePrompt({ scene: '$lyna sits by the window next to $me', ...ents, settings: s, backend: 'sd' });
     const idx = k => prompt.indexOf(k);
     assert.ok(idx('<lora:lyna') < idx('masterpiece') && idx('masterpiece') < idx('anime style') && idx('anime style') < idx('<lora:anime') && idx('<lora:anime') < idx('1girl') && idx('1girl') < idx('pov') && idx('pov') < idx('sits by'));
     assert.ok(prompt.includes('Lyna sits by the window') && !prompt.includes('$lyna'));
@@ -116,16 +128,24 @@ test('settings migration v1 -> v2 moves sampler/steps into model profiles', () =
     assert.equal(fresh.version, SETTINGS_VERSION); assert.deepEqual(fresh.connection.profiles, { sd: {}, nai: {} });
 });
 
-test('image URLs: spaces/parens encoded so markdown renders; listImages + gallery tolerate legacy URLs', () => {
+test('image snippet: bare form (no title), URL-encoded; legacy title form still parsed + migrated', () => {
     assert.equal(safeImageUrl('/user/images/Don Rosario (x)/a.png'), '/user/images/Don%20Rosario%20%28x%29/a.png');
-    const snip = imageSnippet('/user/images/Don Rosario/a.png', 'a "quoted" title');
-    assert.ok(snip.includes('(/user/images/Don%20Rosario/a.png "a  quoted  title")'));
+    const snip = imageSnippet('/user/images/Don Rosario/a.png');
+    assert.equal(snip, IMG_MARK + String.fromCharCode(10) + '![IF Imgen](/user/images/Don%20Rosario/a.png)');
+    assert.ok(!snip.includes('"'), 'no quotes -> ST <q> wrapper cannot break it');
     const legacy = ['p1', '', IMG_MARK, '![IF Imgen](/user/images/Don Rosario/old.png "old title")', '', snip].join(String.fromCharCode(10));
     const imgs = listImages(legacy);
     assert.equal(imgs.length, 2); assert.equal(imgs[0].url, '/user/images/Don Rosario/old.png'); assert.equal(imgs[0].title, 'old title');
     assert.equal(countImages(legacy), 2); assert.equal(stripImages(legacy), 'p1');
-    const g = collectChatImages([{ name: 'A', mes: 'no image' }, { name: 'B', mes: legacy }]);
-    assert.equal(g.length, 2); assert.equal(g[0].messageId, 1); assert.equal(g[0].url, '/user/images/Don%20Rosario/old.png');
+    const mg = migrateLegacyImages(legacy);
+    assert.ok(mg.changed); assert.equal(mg.recovered.length, 1); assert.equal(mg.recovered[0].url, '/user/images/Don%20Rosario/old.png');
+    assert.ok(!mg.mes.includes('"old title"') && mg.mes.includes('(/user/images/Don%20Rosario/old.png)'));
+    assert.equal(migrateLegacyImages(mg.mes).changed, false, 'idempotent');
+    const g = collectChatImages([{ name: 'A', mes: 'no image' }, { name: 'B', mes: mg.mes, extra: { ifimgen: [{ url: '/user/images/Don%20Rosario/old.png', scene: 'S', prompt: 'P' }] } }]);
+    assert.equal(g.length, 2); assert.equal(g[0].messageId, 1); assert.equal(g[0].scene, 'S'); assert.equal(g[1].prompt, '');
+    const rep = replaceImageUrl(mg.mes, '/user/images/Don%20Rosario/a.png', '/user/images/Don Rosario/b.png');
+    assert.ok(rep.includes('(/user/images/Don%20Rosario/b.png)') && !rep.includes('/a.png'));
+    assert.equal(removeImageByUrl(rep, '/user/images/Don%20Rosario/b.png'), ['p1', '', IMG_MARK, '![IF Imgen](/user/images/Don%20Rosario/old.png)'].join(String.fromCharCode(10)));
 });
 
 test('import/export roundtrip + keyword dedupe', () => {

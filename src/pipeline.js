@@ -1,11 +1,14 @@
 // IF Imgen - per-message pipeline: paragraphs -> planner LLM -> N images -> insert in place.
-import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages } from './paragraphs.js';
+// Each image is also recorded in message.extra.ifimgen so it can be regenerated later.
+import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
 import { resolveEntities, rosterText } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { clamp } from './util.js';
 
-export function createPipeline({ settings, getContext, backends, llm, saveImage, log = () => {} }) {
+/** @typedef {{ url:string, p:number, scene:string, prompt:string, negative:string, backend:string, model:string, at:number }} ImageRecord */
+
+export function createPipeline({ settings, getContext, backends, llm, saveImage, log = () => {}, onChange = () => {} }) {
     const inflight = new Map(); // messageId -> AbortController
 
     function chatIdentity(ctx) {
@@ -32,6 +35,34 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         try { onChange(messageId); } catch { /* UI hook must never break the pipeline */ }
     }
 
+    /** @returns {ImageRecord[]} live array on message.extra */
+    function records(msg) {
+        msg.extra ??= {};
+        if (!Array.isArray(msg.extra.ifimgen)) msg.extra.ifimgen = [];
+        return msg.extra.ifimgen;
+    }
+    const findRecord = (msg, url) => records(msg).find(r => r.url === url) ?? null;
+
+    /** Compile scene -> final prompt with current entities/style/settings. */
+    function compileScene(ctx, scene, backendId) {
+        const ident = chatIdentity(ctx);
+        const ents = resolveEntities(settings, { text: scene, ...ident });
+        const { prompt, negative } = compilePrompt({ scene, ...ents, settings, backend: backendId });
+        return { prompt, negative, ents };
+    }
+
+    async function render(ctx, { scene, p }, signal, status) {
+        const backend = backends.active();
+        const params = effectiveParams(settings, backend.id);
+        const { prompt, negative, ents } = compileScene(ctx, scene, backend.id);
+        log(`compiled [chars: ${ents.characters.map(e => e.name).join(',') || '-'} | personas: ${ents.personas.map(e => e.name).join(',') || '-'} | style: ${ents.style?.name ?? '-'}]`, prompt);
+        const b64 = await backend.generate({ prompt, negative, params }, signal);
+        const url = safeImageUrl(await saveImage(b64, ctx.characters?.[ctx.characterId]?.name || 'IF_Imgen'));
+        /** @type {ImageRecord} */
+        const rec = { url, p, scene, prompt, negative, backend: backend.id, model: params.model ?? '', at: Date.now() };
+        return rec;
+    }
+
     /**
      * @param {number} messageId
      * @param {{ count?: number, presetId?: string, force?: boolean, onStatus?: (s:string)=>void }} [opt]
@@ -43,9 +74,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         if (inflight.has(messageId)) return { skipped: 'already running' };
         if (!opt.force && countImages(msg.mes) > 0) return { skipped: 'already has images' };
 
+        // force on a message that already has images = full regenerate: plan again on the clean text.
+        const replacing = opt.force && countImages(msg.mes) > 0;
+        const baseText = replacing ? stripImages(msg.mes) : msg.mes;
+
         const g = settings.generate;
         const count = clamp(opt.count ?? g.imagesPerResponse, 1, 8);
-        const paragraphs = splitParagraphs(msg.mes, g.minParagraphChars);
+        const paragraphs = splitParagraphs(baseText, g.minParagraphChars);
         if (!paragraphs.length) return { skipped: 'no usable paragraphs' };
 
         const controller = new AbortController();
@@ -64,26 +99,22 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const reply = await llm.chat({ system, user, signal: controller.signal });
             const plan = parsePlan(reply, paragraphs.map(p => p.index)).slice(0, count);
             if (!plan.length) throw new Error('Planner returned no usable JSON plan.');
+            log('plan', plan);
 
-            const backend = backends.active();
-            const params = effectiveParams(settings, backend.id);
-            const inserts = [];
+            const made = [];
             for (let i = 0; i < plan.length; i++) {
-                const item = plan[i];
-                status(`image ${i + 1}/${plan.length} (paragraph ${item.p})…`);
-                const ents = resolveEntities(settings, { text: item.prompt, ...ident });
-                const { prompt, negative } = compilePrompt({ scene: item.prompt, ...ents, settings, backend: backend.id });
-                const b64 = await backend.generate({ prompt, negative, params }, controller.signal);
-                const url = await saveImage(b64, ctx.characters?.[ctx.characterId]?.name || 'IF_Imgen');
-                inserts.push({ p: item.p, snippet: imageSnippet(url, prompt) });
+                status(`image ${i + 1}/${plan.length} (paragraph ${plan[i].p})…`);
+                made.push(await render(ctx, { scene: plan[i].prompt, p: plan[i].p }, controller.signal, status));
             }
 
             // Stale check: the message may have been swiped/edited while generating.
-            if (ctx.chat[messageId]?.mes !== originalText) return { skipped: 'message changed during generation', generated: inserts.length };
-            setMessageText(ctx, messageId, insertAfterParagraphs(originalText, paragraphs, inserts));
+            if (ctx.chat[messageId]?.mes !== originalText) return { skipped: 'message changed during generation', generated: made.length };
+            if (replacing) records(msg).length = 0;
+            records(msg).push(...made);
+            setMessageText(ctx, messageId, insertAfterParagraphs(baseText, paragraphs, made.map(r => ({ p: r.p, snippet: imageSnippet(r.url) }))));
             await ctx.saveChat();
-            status(`done (${inserts.length} image${inserts.length > 1 ? 's' : ''})`);
-            return { generated: inserts.length };
+            status(`done (${made.length} image${made.length > 1 ? 's' : ''})`);
+            return { generated: made.length };
         } catch (e) {
             if (e?.name === 'AbortError') { status('cancelled'); return { skipped: 'cancelled' }; }
             status(`error: ${e.message}`);
@@ -93,18 +124,89 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         }
     }
 
+    /**
+     * Re-render one image in place. `scene` overrides the stored planner scene;
+     * entities/style/settings are re-applied at compile time, so edits to
+     * characters or styles take effect without touching the chat by hand.
+     */
+    async function regenerate(messageId, url, { scene, onStatus } = {}) {
+        const ctx = getContext();
+        const msg = ctx.chat[messageId];
+        if (!msg) throw new Error('Message not found.');
+        if (inflight.has(messageId)) throw new Error('This message is already generating.');
+        const rec = findRecord(msg, url);
+        const useScene = String(scene ?? rec?.scene ?? '').trim();
+        if (!useScene) throw new Error('No stored prompt for this image — use "Edit & regenerate" and type one.');
+        const controller = new AbortController();
+        inflight.set(messageId, controller);
+        const status = s => { log(`#${messageId} regen ${s}`); onStatus?.(s); };
+        try {
+            status('rendering…');
+            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0 }, controller.signal, status);
+            const list = records(msg);
+            const i = list.findIndex(r => r.url === url);
+            if (i >= 0) list[i] = fresh; else list.push(fresh);
+            setMessageText(ctx, messageId, replaceImageUrl(msg.mes, url, fresh.url));
+            await ctx.saveChat();
+            status('done');
+            return fresh;
+        } catch (e) {
+            if (e?.name === 'AbortError') { status('cancelled'); return null; }
+            status(`error: ${e.message}`);
+            throw e;
+        } finally {
+            inflight.delete(messageId);
+        }
+    }
+
+    async function removeImage(messageId, url) {
+        const ctx = getContext();
+        const msg = ctx.chat[messageId];
+        if (!msg) return;
+        const list = records(msg);
+        const i = list.findIndex(r => r.url === url);
+        if (i >= 0) list.splice(i, 1);
+        setMessageText(ctx, messageId, removeImageByUrl(msg.mes, url));
+        await ctx.saveChat();
+    }
+
     async function clear(messageId) {
         const ctx = getContext();
         const msg = ctx.chat[messageId];
         if (!msg) return;
+        if (msg.extra) msg.extra.ifimgen = [];
         setMessageText(ctx, messageId, stripImages(msg.mes));
         await ctx.saveChat();
     }
 
-    function cancel(messageId) {
-        if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }
-        inflight.get(messageId)?.abort();
+    /**
+     * Upgrade v0.1/v0.2 snippets (title form, raw URLs) in the current chat to the
+     * bare form and keep their prompts in message.extra. Runs on chat load.
+     */
+    async function migrateChat() {
+        const ctx = getContext();
+        let changed = 0;
+        (ctx.chat ?? []).forEach((m, id) => {
+            if (!m?.mes || !m.mes.includes('![IF Imgen](')) return;
+            const r = migrateLegacyImages(m.mes);
+            if (!r.changed) return;
+            const list = records(m);
+            for (const { url, title } of r.recovered) if (!list.some(x => x.url === url)) list.push({ url, p: 0, scene: '', prompt: title, negative: '', backend: '', model: '', at: 0 });
+            setMessageText(ctx, id, r.mes);
+            changed++;
+        });
+        if (changed) { await ctx.saveChat(); log(`migrated ${changed} message(s) to bare image form`); }
+        return changed;
     }
 
-    return { run, clear, cancel, isRunning: id => inflight.has(id) };
+    return {
+        run, regenerate, removeImage, clear, migrateChat,
+        cancel(messageId) {
+            if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }
+            inflight.get(messageId)?.abort();
+        },
+        isRunning: id => inflight.has(id),
+        recordFor: (messageId, url) => findRecord(getContext().chat[messageId] ?? {}, url),
+        compilePreview: scene => compileScene(getContext(), scene, backends.active().id),
+    };
 }

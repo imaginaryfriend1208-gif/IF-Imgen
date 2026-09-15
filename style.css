@@ -103,3 +103,12 @@
     .ifimgen-row > label { min-width: 100%; }
     .ifimgen-tabs { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---- viewer captions */
+.ifimgen-lightbox-cap { text-align: left; line-height: 1.35; }
+.ifimgen-lightbox-cap > div { margin-top: 4px; }
+.ifimgen-cap-k { display: inline-block; font-size: .75em; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin-right: 6px; border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 4px; }
+.ifimgen-lightbox-status { min-height: 1.2em; color: #ccc; }
+.ifimgen-lightbox-bar { flex-wrap: wrap; justify-content: center; }
+.mes_text img[alt="IF Imgen"] { cursor: zoom-in; }
+.ifimgen-pre { white-space: pre-wrap; word-break: break-word; font-size: .8em; max-height: 220px; overflow: auto; margin: 0; padding: 6px; border: 1px solid var(--ifg-border); border-radius: 4px; background: rgba(0,0,0,.2); }
