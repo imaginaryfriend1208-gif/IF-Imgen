@@ -83,10 +83,6 @@ const en = {
     // ---- generate
     box_behaviour: 'Behaviour', lbl_enabled: 'Extension enabled', lbl_auto: 'Auto-generate on every character reply',
     lbl_show_button: 'Show per-message button', lbl_collapse: 'Collapse images in chat behind a small button',
-    lbl_floater: 'Floating quick-action button (regen first) + progress strip on the reply being illustrated',
-    fl_title: 'IF Imgen quick actions', fl_idle: 'IF Imgen', fl_running: '{n} running', fl_regen: 'Regen last reply', fl_regen_sub: 'redraw all images of the last reply (same scenes, new refine)',
-    fl_generate: 'Generate for last reply', fl_generate_sub: 'plan again from the text (replaces the images)', fl_cancel: 'Cancel running jobs', fl_gallery: 'Gallery', fl_settings: 'Settings', fl_collapse: 'Toggle image collapse', fl_drag: 'drag to move',
-    fl_no_reply: 'No character reply to illustrate.', gen_bar: 'IF Imgen: generating images…',
     lbl_align: 'Image alignment in chat', opt_align_left: 'Left', opt_align_center: 'Center', opt_align_right: 'Right',
     lbl_count: 'Images per response', lbl_ctx: 'Context messages', lbl_minchars: 'Min paragraph chars', lbl_dialect: 'Prompt dialect',
     opt_tags: 'Tags (danbooru)', opt_natural: 'Natural language',
@@ -217,10 +213,6 @@ const vi = {
     // ---- generate
     box_behaviour: 'Hành vi', lbl_enabled: 'Bật extension', lbl_auto: 'Tự tạo ảnh sau mỗi câu trả lời của nhân vật',
     lbl_show_button: 'Hiện nút trên từng tin nhắn', lbl_collapse: 'Thu gọn ảnh trong chat vào một nút nhỏ',
-    lbl_floater: 'Nút nổi thao tác nhanh (regen đặt đầu) + thanh tiến trình trên reply đang vẽ',
-    fl_title: 'IF Imgen - thao tác nhanh', fl_idle: 'IF Imgen', fl_running: '{n} đang chạy', fl_regen: 'Regen reply cuối', fl_regen_sub: 'vẽ lại toàn bộ ảnh của reply cuối (giữ cảnh, refine mới)',
-    fl_generate: 'Tạo ảnh cho reply cuối', fl_generate_sub: 'planner chọn lại từ text (thay ảnh cũ)', fl_cancel: 'Hủy job đang chạy', fl_gallery: 'Thư viện', fl_settings: 'Cài đặt', fl_collapse: 'Bật/tắt thu gọn ảnh', fl_drag: 'kéo để di chuyển',
-    fl_no_reply: 'Chưa có reply nào của nhân vật để vẽ.', gen_bar: 'IF Imgen: đang tạo ảnh…',
     lbl_align: 'Căn lề ảnh trong chat', opt_align_left: 'Trái', opt_align_center: 'Giữa', opt_align_right: 'Phải',
     lbl_count: 'Số ảnh mỗi câu trả lời', lbl_ctx: 'Số tin nhắn ngữ cảnh', lbl_minchars: 'Độ dài đoạn tối thiểu', lbl_dialect: 'Kiểu prompt',
     opt_tags: 'Tags (danbooru)', opt_natural: 'Ngôn ngữ tự nhiên',

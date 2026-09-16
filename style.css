@@ -223,37 +223,3 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-lightbox-versions img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 2px solid transparent; cursor: pointer; opacity: .7; }
 .ifimgen-lightbox-versions img:hover { opacity: 1; }
 .ifimgen-lightbox-versions img.cur { border-color: var(--SmartThemeQuoteColor, #7aa2f7); opacity: 1; cursor: default; }
-
-/* ---- floating quick-action button + popup ---- */
-.ifimgen-fl { position: fixed; z-index: 3000; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; touch-action: none; }
-.ifimgen-fl-btn { width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeBlurTintColor); color: var(--SmartThemeBodyColor); box-shadow: 0 4px 16px rgba(0,0,0,.35); display: grid; place-items: center; cursor: pointer; position: relative; backdrop-filter: blur(6px); }
-.ifimgen-fl-btn svg { width: 24px; height: 24px; }
-.ifimgen-fl-btn .ifimgen-fl-count { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--SmartThemeQuoteColor); color: #fff; font-size: 11px; font-weight: 700; display: none; place-items: center; padding: 0 5px; }
-.ifimgen-fl.running .ifimgen-fl-count { display: grid; }
-.ifimgen-fl.running .ifimgen-fl-btn::before { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 3px solid transparent; border-top-color: var(--SmartThemeQuoteColor); animation: ifimgen-spin 1s linear infinite; }
-.ifimgen-fl-pop { display: none; flex-direction: column; gap: 6px; width: 260px; max-width: calc(100vw - 24px); padding: 10px; border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeBlurTintColor); backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
-.ifimgen-fl.open .ifimgen-fl-pop { display: flex; }
-.ifimgen-fl-pop .ifimgen-fl-status { font-size: 12px; opacity: .8; padding: 0 2px 4px; border-bottom: 1px solid var(--SmartThemeBorderColor); }
-.ifimgen-fl-act { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor); background: transparent; color: var(--SmartThemeBodyColor); cursor: pointer; text-align: left; width: 100%; }
-.ifimgen-fl-act:hover { background: rgba(255,255,255,.06); }
-.ifimgen-fl-act svg { width: 18px; height: 18px; flex: 0 0 18px; }
-.ifimgen-fl-act b { display: block; font-size: 13px; }
-.ifimgen-fl-act small { display: block; font-size: 11px; opacity: .7; }
-.ifimgen-fl-act.primary { padding: 12px 10px; border-color: var(--SmartThemeQuoteColor); background: color-mix(in srgb, var(--SmartThemeQuoteColor) 18%, transparent); }
-.ifimgen-fl-act.primary svg { width: 24px; height: 24px; flex-basis: 24px; }
-.ifimgen-fl-act.danger { border-color: #c0392b; }
-.ifimgen-fl-act:disabled { opacity: .4; cursor: default; }
-.ifimgen-fl-row { display: flex; gap: 6px; }
-.ifimgen-fl-row .ifimgen-fl-act { justify-content: center; padding: 8px 6px; }
-.ifimgen-fl-row .ifimgen-fl-act b { font-size: 12px; }
-@keyframes ifimgen-spin { to { transform: rotate(360deg); } }
-
-/* ---- per-message "generating…" strip ---- */
-.ifimgen-genbar { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 5px 10px; border-radius: 8px; font-size: 12px; background: color-mix(in srgb, var(--SmartThemeQuoteColor) 18%, transparent); border: 1px solid var(--SmartThemeQuoteColor); }
-.ifimgen-genbar::before { content: ''; width: 12px; height: 12px; border-radius: 50%; border: 2px solid transparent; border-top-color: currentColor; animation: ifimgen-spin .9s linear infinite; flex: 0 0 12px; }
-.ifimgen-genbar .ifimgen-genbar-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ifimgen-genbar-bar { position: relative; height: 3px; flex: 0 0 60px; border-radius: 2px; background: rgba(255,255,255,.15); overflow: hidden; }
-.ifimgen-genbar-bar::after { content: ''; position: absolute; inset: 0; width: 40%; background: currentColor; animation: ifimgen-slide 1.2s ease-in-out infinite; }
-@keyframes ifimgen-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
-.mes.ifimgen-generating .mes_text { position: relative; }
-.mes.ifimgen-generating .mes_text::after { content: ''; position: absolute; left: -8px; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: var(--SmartThemeQuoteColor); opacity: .8; }

@@ -282,7 +282,6 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_auto', () => g.auto, v => g.auto = v);
     bind('ifimgen_show_button', () => g.showButton, v => g.showButton = v);
     bind('ifimgen_collapse', () => g.collapseImages, v => { g.collapseImages = v; document.body.classList.toggle('ifimgen-collapse', v); onCollapseChange?.(v); });
-    bind('ifimgen_floater', () => g.floater, v => { g.floater = v; onFloaterChange?.(v); });
     document.body.classList.toggle('ifimgen-collapse', Boolean(g.collapseImages));
     bind('ifimgen_align', () => g.imageAlign, v => { g.imageAlign = v; onAlignChange?.(v); });
     bind('ifimgen_count', () => g.imagesPerResponse, v => g.imagesPerResponse = v);
@@ -722,7 +721,6 @@ function generatePanel() {
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_auto" type="checkbox"> ${t('lbl_auto')}</label></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_show_button" type="checkbox"> ${t('lbl_show_button')}</label></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_collapse" type="checkbox"> ${t('lbl_collapse')}</label></div>
-            <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_floater" type="checkbox"> ${t('lbl_floater')}</label></div>
             <div class="ifimgen-row"><label for="ifimgen_align">${t('lbl_align')}</label><select id="ifimgen_align" class="text_pole"><option value="left">${t('opt_align_left')}</option><option value="center">${t('opt_align_center')}</option><option value="right">${t('opt_align_right')}</option></select></div>
             <div class="ifimgen-grid2">
                 ${numRow('ifimgen_count', t('lbl_count'), 1, 8)}${numRow('ifimgen_ctx', t('lbl_ctx'), 0, 20)}
