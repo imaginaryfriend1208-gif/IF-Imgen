@@ -233,9 +233,10 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-lightbox-versions img.cur { border-color: var(--SmartThemeQuoteColor, #7aa2f7); opacity: 1; cursor: default; }
 
 /* ---- floating quick-action button (bottom-right by default; drag = inline left/top) ---- */
-.ifimgen-fl { position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); z-index: 3000; width: 40px; height: 40px; touch-action: none; }
+.ifimgen-fl { position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); z-index: 3000; width: 40px; height: 40px; }
+/* touch-action: none ONLY on the drag handle - the popup (style editor form) must keep native touch scrolling */
 .ifimgen-fl-btn {
-    width: 40px; height: 40px; border-radius: 50%; padding: 0; position: relative; cursor: pointer; user-select: none;
+    width: 40px; height: 40px; border-radius: 50%; padding: 0; position: relative; cursor: pointer; user-select: none; touch-action: none;
     border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .25)); background: var(--SmartThemeBlurTintColor, rgba(30, 30, 40, .85)); color: var(--SmartThemeBodyColor, #e6e6e6);
     box-shadow: 0 4px 14px rgba(0, 0, 0, .4); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(6px);
 }
@@ -247,9 +248,9 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 @keyframes ifimgen-spin { to { transform: rotate(360deg); } }
 /* popup: anchored to the button, opens up-left; flip-x / flip-y when the button sits near the left / top edge */
 .ifimgen-fl-pop {
-    display: none; position: absolute; right: 0; bottom: 48px; flex-direction: column; gap: 6px; width: 264px; max-width: calc(100vw - 24px); padding: 10px;
+    display: none; position: absolute; right: 0; bottom: 48px; flex-direction: column; gap: 6px; width: 286px; max-width: calc(100vw - 16px); padding: 10px; box-sizing: border-box;
     border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .25)); background: var(--SmartThemeBlurTintColor, rgba(30, 30, 40, .95)); color: var(--SmartThemeBodyColor, #e6e6e6);
-    backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); font-size: 13px;
+    backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); font-size: 13px; touch-action: auto; overscroll-behavior: contain;
 }
 .ifimgen-fl.open .ifimgen-fl-pop { display: flex; }
 .ifimgen-fl-pop.flip-y { bottom: auto; top: 48px; }
@@ -265,8 +266,8 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-fl-act.danger { border-color: #c0392b; }
 /* rows: regen + gen side by side (icon on top, label + hint under it); mini row = gallery / collapse / settings, small icon + short label */
 .ifimgen-fl-row { display: flex; gap: 6px; }
-.ifimgen-fl-row .ifimgen-fl-act { flex: 1 1 0; flex-direction: column; justify-content: flex-start; gap: 3px; padding: 7px 6px; text-align: center; }
-.ifimgen-fl-row .ifimgen-fl-act b { font-size: 11px; }
+.ifimgen-fl-row .ifimgen-fl-act { flex: 1 1 0; flex-direction: row; justify-content: center; gap: 6px; padding: 7px 6px; text-align: center; }
+.ifimgen-fl-row .ifimgen-fl-act b { font-size: 12px; }
 .ifimgen-fl-row-mini .ifimgen-fl-act { flex-direction: row; justify-content: center; gap: 5px; padding: 5px 4px; }
 .ifimgen-fl-row-mini .ifimgen-fl-act .ifimgen-ico { width: 12px; height: 12px; flex-basis: 12px; }
 .ifimgen-fl-row-mini .ifimgen-fl-act b { font-size: 10px; font-weight: 500; }
@@ -281,7 +282,7 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-fl-mini:disabled { opacity: .4; cursor: default; }
 .ifimgen-fl-mini .ifimgen-ico { width: 14px; height: 14px; }
 /* in-popup style editor */
-.ifimgen-fl.editing .ifimgen-fl-pop { width: 320px; }
+.ifimgen-fl.editing .ifimgen-fl-pop { width: 342px; }
 .ifimgen-fl-edit-head { display: flex; align-items: center; gap: 8px; opacity: 1; }
 .ifimgen-fl-form { display: flex; flex-direction: column; gap: 6px; max-height: min(52vh, 420px); overflow-y: auto; padding-right: 2px; }
 .ifimgen-fl-field { display: flex; flex-direction: column; gap: 2px; margin: 0; }
@@ -303,7 +304,12 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-genbar-cancel { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; opacity: .8; }
 .ifimgen-genbar-cancel:hover { opacity: 1; background: rgba(192, 57, 43, .35); }
 .ifimgen-genbar-cancel .ifimgen-ico { width: 12px; height: 12px; }
-.ifimgen-genpill { display: none; position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 2999; align-items: center; gap: 8px; max-width: calc(100vw - 120px); padding: 5px 12px; border-radius: 14px; font-size: 12px; cursor: pointer; color: var(--SmartThemeBodyColor, #e6e6e6); background: var(--SmartThemeBlurTintColor, rgba(30, 30, 40, .9)); border: 1px solid var(--SmartThemeQuoteColor, #7aa2f7); box-shadow: 0 4px 14px rgba(0, 0, 0, .4); backdrop-filter: blur(6px); }
+.ifimgen-genpill { display: none; position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 2999; align-items: center; gap: 8px; max-width: calc(100vw - 150px); box-sizing: border-box; padding: 5px 12px; border-radius: 14px; font-size: 12px; cursor: pointer; color: var(--SmartThemeBodyColor, #e6e6e6); background: var(--SmartThemeBlurTintColor, rgba(30, 30, 40, .9)); border: 1px solid var(--SmartThemeQuoteColor, #7aa2f7); box-shadow: 0 4px 14px rgba(0, 0, 0, .4); backdrop-filter: blur(6px); }
 .ifimgen-genpill.show { display: flex; }
 .ifimgen-genpill::before { content: ''; width: 12px; height: 12px; flex: 0 0 12px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--SmartThemeQuoteColor, #7aa2f7); animation: ifimgen-spin .9s linear infinite; }
 .ifimgen-genpill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* phones: the pill sits left of the floater button (never under it); the strip drops its mini bar so the status text gets the room */
+@media (max-width: 600px) {
+    .ifimgen-genpill { left: 12px; right: 68px; transform: none; max-width: none; }
+    .ifimgen-genbar-bar { display: none; }
+}

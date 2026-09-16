@@ -94,6 +94,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
                 <button type="button" class="ifimgen-fl-act${isDef ? ' active' : ''}" data-act="style-default"${cur ? '' : ' disabled'}>${ICONS.star}<span><b>${isDef ? t('btn_default_on') : t('btn_set_default')}</b></span></button>
                 <button type="button" class="ifimgen-fl-act danger" data-act="style-delete"${cur ? '' : ' disabled'} title="${t('btn_delete')}">${ICONS.trash}<span><b>${t('btn_delete')}</b></span></button>
             </div>`;
+        fitPop();
         setTimeout(() => pop.querySelector('[data-f="name"]')?.focus(), 0);
     }
     const editStatus = (text, cls = '') => { const n = pop?.querySelector('[data-edit-status]'); if (n) { n.textContent = text; n.className = `ifimgen-fl-status ifimgen-fl-edit-status ${cls}`; } };
@@ -104,7 +105,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
     };
     function styleSave() {
         const e = readEditor();
-        if (!e.name.trim()) return editStatus(t('fl_style_name_req'), 'error');
+        if (!e.name.trim()) return editStatus(t('st_name_required'), 'error');
         upsertEntity(styles(), e);
         if (!styles().some(x => x.id === settings.defaultStyleId)) settings.defaultStyleId = e.id;
         editing = { id: e.id };
@@ -144,8 +145,8 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         pop.innerHTML = `
             <div class="ifimgen-fl-status">${busy ? statusText(lastState) : t('fl_title')}</div>
             <div class="ifimgen-fl-row">
-                ${item('regen', 'refresh', t('fl_regen'), t('fl_regen_sub'), 'primary')}
-                ${item('gen', 'sparkles', t('fl_generate'), t('fl_generate_sub'))}
+                <button type="button" class="ifimgen-fl-act primary" data-act="regen" title="${escapeHtml(t('fl_regen_sub'))}">${ICONS.refresh}<span><b>${t('fl_regen')}</b></span></button>
+                <button type="button" class="ifimgen-fl-act" data-act="gen" title="${escapeHtml(t('fl_generate_sub'))}">${ICONS.sparkles}<span><b>${t('fl_generate')}</b></span></button>
             </div>
             ${busy ? item('cancel', 'x', t('fl_cancel', { n: lastState.running }), '', 'danger') : ''}
             ${styleRow()}
@@ -155,19 +156,39 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
                 ${item('settings', 'settings', t('fl_settings'))}
             </div>
             <div class="ifimgen-fl-hint">${t('fl_drag')}</div>`;
+        fitPop();
     }
     function openPop() {
         if (!root || !pop) return;
         editing = null;
         renderPop();
-        // keep the popup inside the viewport: open downwards near the top edge, leftwards near the left edge
+        // preferred side: open downwards when the button sits in the upper half, rightwards when in the left half
         const r = root.getBoundingClientRect();
-        pop.classList.toggle('flip-y', r.top < 360);
-        pop.classList.toggle('flip-x', r.left < 280);
+        pop.classList.toggle('flip-y', r.top + r.height / 2 < window.innerHeight / 2);
+        pop.classList.toggle('flip-x', r.left + r.width / 2 < window.innerWidth / 2);
         root.classList.add('open');
+        fitPop();
         setTimeout(() => document.addEventListener('pointerdown', outside, { capture: true }), 0);
     }
-    function closePop() { root?.classList.remove('open', 'editing'); editing = null; document.removeEventListener('pointerdown', outside, { capture: true }); }
+    /**
+     * Phones: the popup can be wider / taller than the space on the chosen side (or than the whole viewport
+     * once the keyboard is up). Measure it and translate / cap its height so it always stays on screen.
+     */
+    function fitPop() {
+        if (!pop || !root?.classList.contains('open')) return;
+        const M = 8;
+        pop.style.transform = ''; pop.style.maxHeight = ''; pop.style.overflowY = '';
+        let r = pop.getBoundingClientRect();
+        const maxH = window.innerHeight - 2 * M;
+        if (r.height > maxH) { pop.style.maxHeight = `${maxH}px`; pop.style.overflowY = 'auto'; r = pop.getBoundingClientRect(); }
+        let dx = 0, dy = 0;
+        if (r.right > window.innerWidth - M) dx = window.innerWidth - M - r.right;
+        if (r.left + dx < M) dx = M - r.left;
+        if (r.bottom > window.innerHeight - M) dy = window.innerHeight - M - r.bottom;
+        if (r.top + dy < M) dy = M - r.top;
+        if (dx || dy) pop.style.transform = `translate(${Math.round(dx)}px, ${Math.round(dy)}px)`;
+    }
+    function closePop() { root?.classList.remove('open', 'editing'); editing = null; if (pop) { pop.style.transform = ''; pop.style.maxHeight = ''; pop.style.overflowY = ''; } document.removeEventListener('pointerdown', outside, { capture: true }); }
     const outside = e => { if (root && !root.contains(e.target)) closePop(); };
     function onAction(e) {
         const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
@@ -221,7 +242,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         const cy = Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h));
         root.style.left = `${cx}px`; root.style.top = `${cy}px`; root.style.right = 'auto'; root.style.bottom = 'auto';
     }
-    function onResize() { if (root && g.floaterPos && Number.isFinite(g.floaterPos.x)) place(g.floaterPos.x, g.floaterPos.y); }
+    function onResize() { if (root && g.floaterPos && Number.isFinite(g.floaterPos.x)) place(g.floaterPos.x, g.floaterPos.y); fitPop(); }
 
     // ------------------------------------------------------------------ progress markers
     function paint(st) {

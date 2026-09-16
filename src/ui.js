@@ -34,13 +34,15 @@ const SD_SAMPLERS = ['Euler a', 'Euler', 'DPM++ 2M', 'DPM++ 2M SDE', 'DPM++ SDE'
 const SD_SCHEDULERS = ['Automatic', 'Karras', 'Exponential', 'SGM Uniform', 'Simple', 'Normal', 'DDIM', 'Beta', 'Align Your Steps',
     'simple', 'normal', 'karras', 'exponential', 'sgm_uniform', 'ddim_uniform', 'beta', 'linear_quadratic', 'kl_optimal'];
 // Common SDXL / Illustrious / NAI / Krea sizes.
+// kind -> i18n key (size_portrait / size_square / size_landscape); label built at render time so it follows the language.
 const SIZE_PRESETS = [
-    { label: 'Portrait 832×1216', w: 832, h: 1216 }, { label: 'Portrait 896×1152', w: 896, h: 1152 }, { label: 'Portrait 768×1344', w: 768, h: 1344 },
-    { label: 'Portrait HD 1024×1536', w: 1024, h: 1536 }, { label: 'Portrait HD 1216×1532', w: 1216, h: 1532 },
-    { label: 'Square 1024×1024', w: 1024, h: 1024 }, { label: 'Square HD 1536×1536', w: 1536, h: 1536 },
-    { label: 'Landscape 1216×832', w: 1216, h: 832 }, { label: 'Landscape 1152×896', w: 1152, h: 896 }, { label: 'Landscape 1344×768', w: 1344, h: 768 },
-    { label: 'Landscape HD 1536×1024', w: 1536, h: 1024 }, { label: 'Landscape HD 1532×1216', w: 1532, h: 1216 },
+    { kind: 'portrait', w: 832, h: 1216 }, { kind: 'portrait', w: 896, h: 1152 }, { kind: 'portrait', w: 768, h: 1344 },
+    { kind: 'portrait', hd: true, w: 1024, h: 1536 }, { kind: 'portrait', hd: true, w: 1216, h: 1532 },
+    { kind: 'square', w: 1024, h: 1024 }, { kind: 'square', hd: true, w: 1536, h: 1536 },
+    { kind: 'landscape', w: 1216, h: 832 }, { kind: 'landscape', w: 1152, h: 896 }, { kind: 'landscape', w: 1344, h: 768 },
+    { kind: 'landscape', hd: true, w: 1536, h: 1024 }, { kind: 'landscape', hd: true, w: 1532, h: 1216 },
 ];
+const sizeLabel = s => `${t(`size_${s.kind}`)}${s.hd ? ' HD' : ''} ${s.w}×${s.h}`;
 
 /**
  * Mount the drawer. Switching language re-runs the whole mount (cheap: it is just
@@ -107,7 +109,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         fillModels();
     }
     root.querySelectorAll('.ifimgen-subtab').forEach(tab => tab.addEventListener('click', () => { viewing = tab.dataset.be; renderBackendTabs(); }));
-    $('ifimgen_activate').addEventListener('click', () => { c.backend = viewing; save(); renderBackendTabs(); status('ifimgen_conn_status', `${BACKENDS.find(b => b.id === viewing).label} is now the active image API.`, 'ok'); });
+    $('ifimgen_activate').addEventListener('click', () => { c.backend = viewing; save(); renderBackendTabs(); status('ifimgen_conn_status', t('st_backend_active', { name: BACKENDS.find(b => b.id === viewing).label }), 'ok'); });
     bind('ifimgen_sd_url', () => c.sd.url, v => c.sd.url = v.trim());
     bind('ifimgen_sd_auth', () => c.sd.auth, v => c.sd.auth = v.trim());
     // ---- ComfyUI workflow inside the A1111 tab: toggle + textarea + load file + auto-map placeholders
@@ -148,7 +150,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_nai_key', () => c.nai.apiKey, v => c.nai.apiKey = v.trim());
     bind('ifimgen_nai_variety', () => c.nai.variety, v => c.nai.variety = v);
     $('ifimgen_test').addEventListener('click', async () => {
-        status('ifimgen_conn_status', 'Testing…');
+        status('ifimgen_conn_status', t('st_testing'));
         try { status('ifimgen_conn_status', await backends.get(viewing).test(), 'ok'); }
         catch (e) { status('ifimgen_conn_status', e.message, 'error'); }
     });
@@ -216,7 +218,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     modelSel.addEventListener('change', () => { editingModel = modelSel.value; loadParams(); });
     // ---- size presets <-> width/height fields
     const sizeSel = $('ifimgen_p_size');
-    fillSelect(sizeSel, [{ value: '', label: t('opt_size_custom') }, ...SIZE_PRESETS.map(s => ({ value: `${s.w}x${s.h}`, label: s.label }))], '');
+    fillSelect(sizeSel, [{ value: '', label: t('opt_size_custom') }, ...SIZE_PRESETS.map(s => ({ value: `${s.w}x${s.h}`, label: sizeLabel(s) }))], '');
     function syncSizePreset() {
         const key = `${Number($('ifimgen_p_width').value)}x${Number($('ifimgen_p_height').value)}`;
         sizeSel.value = SIZE_PRESETS.some(s => `${s.w}x${s.h}` === key) ? key : '';
@@ -228,7 +230,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     $('ifimgen_p_width').addEventListener('input', syncSizePreset);
     $('ifimgen_p_height').addEventListener('input', syncSizePreset);
     $('ifimgen_fetch_models').addEventListener('click', async () => {
-        status('ifimgen_model_status', 'Fetching…');
+        status('ifimgen_model_status', t('st_fetching'));
         try {
             const be = backends.get(viewing);
             const models = await be.fetchModels();
@@ -247,14 +249,14 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         c.profiles[viewing] ??= {};
         c.profiles[viewing][editingModel] = readParams();
         save(); fillModels();
-        status('ifimgen_model_status', `Profile saved for ${editingModel}.`, 'ok');
+        status('ifimgen_model_status', t('st_profile_saved', { model: editingModel }), 'ok');
     });
     $('ifimgen_set_default').addEventListener('click', () => {
         if (!editingModel) return;
         c[viewing].model = editingModel;
         if (!hasProfile(settings, viewing, editingModel)) { c.profiles[viewing] ??= {}; c.profiles[viewing][editingModel] = readParams(); }
         save(); fillModels();
-        status('ifimgen_model_status', `${editingModel} is now the default model for ${BACKENDS.find(b => b.id === viewing).label}.`, 'ok');
+        status('ifimgen_model_status', t('st_model_default', { model: editingModel, name: BACKENDS.find(b => b.id === viewing).label }), 'ok');
     });
     renderBackendTabs();
 
@@ -273,8 +275,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     profSel.addEventListener('change', () => { l.profileId = profSel.value; save(); });
     showLlm();
     $('ifimgen_llm_test').addEventListener('click', async () => {
-        status('ifimgen_llm_status', 'Asking…');
-        try { const r = await llm.chat({ system: '', user: 'Reply with the single word OK.' }); status('ifimgen_llm_status', `Replied: ${r.slice(0, 80)}`, 'ok'); }
+        status('ifimgen_llm_status', t('st_asking'));
+        try { const r = await llm.chat({ system: '', user: 'Reply with the single word OK.' }); status('ifimgen_llm_status', t('st_replied', { text: r.slice(0, 80) }), 'ok'); }
         catch (e) { status('ifimgen_llm_status', e.message, 'error'); }
     });
 
@@ -371,7 +373,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             const data = JSON.parse(await readFileAsText(f));
             const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
             for (const it of items) if (it?.name && it?.system) settings.data.presets.push(createPreset(it));
-            save(); fillPresets(); status('ifimgen_gen_status', `Imported ${items.length} preset(s).`, 'ok');
+            save(); fillPresets(); status('ifimgen_gen_status', t('st_presets_imported', { n: items.length }), 'ok');
         } catch (err) { status('ifimgen_gen_status', err.message, 'error'); }
         e.target.value = '';
     });
@@ -403,7 +405,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             $('ifimgen_pv_gen2').disabled = Boolean(r.refine?.error);
             pvNegative = { plan: r.plan.negative, refine: r.refine?.negative ?? r.plan.negative };
             status('ifimgen_preview_status', '');
-        } catch (e) { status('ifimgen_preview_status', `Error: ${e.message}`, 'error'); }
+        } catch (e) { status('ifimgen_preview_status', t('st_error', { msg: e.message }), 'error'); }
     });
     const genTest = async (mode, ta, btnEl) => {
         const prompt = ta.value.trim();
@@ -543,22 +545,22 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         q('.ent-new').addEventListener('click', () => { currentId = null; load(null); refreshList(); });
         q('.ent-save').addEventListener('click', () => {
             const e = read();
-            if (!e.name) return setStatus('Name is required.', 'error');
+            if (!e.name) return setStatus(t('st_name_required'), 'error');
             if (!isStyle) {
                 const dup = list().find(x => x.keyword === e.keyword && x.id !== e.id);
-                if (dup) return setStatus(`Keyword "${e.keyword}" already used by "${dup.name}".`, 'error');
+                if (dup) return setStatus(t('st_keyword_dup', { keyword: e.keyword, name: dup.name }), 'error');
             }
             upsertEntity(list(), e); currentId = e.id;
             if (isStyle && !list().some(x => x.id === settings.defaultStyleId)) settings.defaultStyleId = e.id;
             save(); refreshList();
             const empty = !e.tags && !e.natural && !e.loras.length;
-            const label = isStyle ? `Saved style "${e.name}"${settings.defaultStyleId === e.id ? ' (default)' : ''}.` : `Saved "${e.name}" as $${e.keyword}.`;
-            setStatus(`${label}${empty ? ' Warning: no tags / natural description / LoRA — this entry adds nothing to the prompt.' : ''}`, empty ? 'error' : 'ok');
+            const label = isStyle ? t(settings.defaultStyleId === e.id ? 'st_saved_style_default' : 'st_saved_style', { name: e.name }) : t('st_saved_entity', { name: e.name, keyword: e.keyword });
+            setStatus(`${label}${empty ? t('st_saved_empty_warn') : ''}`, empty ? 'error' : 'ok');
         });
         q('.ent-delete').addEventListener('click', () => {
             if (!currentId) return;
             removeEntity(list(), currentId); if (settings.defaultStyleId === currentId) settings.defaultStyleId = list()[0]?.id ?? '';
-            currentId = list()[0]?.id ?? null; save(); load(list().find(x => x.id === currentId)); refreshList(); setStatus('Deleted.', 'ok');
+            currentId = list()[0]?.id ?? null; save(); load(list().find(x => x.id === currentId)); refreshList(); setStatus(t('st_deleted'), 'ok');
         });
         q('.ent-export').addEventListener('click', () => downloadJson(`ifimgen-${kind}.json`, exportEntities(kind, list())));
         q('.ent-import').addEventListener('change', async ev => {
@@ -566,11 +568,11 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             try {
                 const r = importEntities(kind, list(), JSON.parse(await readFileAsText(f)), q('.ent-import-mode').value);
                 save(); currentId = list()[0]?.id ?? null; load(list().find(x => x.id === currentId)); refreshList();
-                setStatus(`Imported: +${r.added} / updated ${r.updated}${r.errors.length ? ` · ${r.errors.length} warning(s)` : ''}`, r.errors.length ? 'error' : 'ok');
+                setStatus(`${t('st_imported', { added: r.added, updated: r.updated })}${r.errors.length ? ` · ${t('st_warnings', { n: r.errors.length })}` : ''}`, r.errors.length ? 'error' : 'ok');
             } catch (e) { setStatus(e.message, 'error'); }
             ev.target.value = '';
         });
-        if (isStyle) q('.ent-default').addEventListener('click', () => { if (!currentId) return setStatus('Save the style first.', 'error'); settings.defaultStyleId = currentId; save(); refreshList(); setStatus('This style is now the default for every image.', 'ok'); });
+        if (isStyle) q('.ent-default').addEventListener('click', () => { if (!currentId) return setStatus(t('st_save_style_first'), 'error'); settings.defaultStyleId = currentId; save(); refreshList(); setStatus(t('st_style_default_set'), 'ok'); });
         const setStatus = (text, cls) => { const n = q('.ent-status'); n.textContent = text; n.className = `ifimgen-status ${cls}`; };
         load(list().find(x => x.id === currentId)); refreshList();
         return {

@@ -33,7 +33,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
 
     function jumpTo(messageId) {
         const el = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
-        if (!el) return toastr.info(`Message #${messageId} is not loaded in the chat view.`, 'IF Imgen');
+        if (!el) return toastr.info(t('vw_msg_not_loaded', { id: messageId }), 'IF Imgen');
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.classList.add('ifimgen-flash');
         setTimeout(() => el.classList.remove('ifimgen-flash'), 1500);

@@ -99,7 +99,7 @@ document.addEventListener('click', e => {
     const items = collectChatImages(getContext().chat);
     const url = new URL(img.getAttribute('src'), location.href).pathname;
     const i = items.findIndex(it => it.url === url || it.url === img.getAttribute('src'));
-    if (i < 0) return toastr.warning('Image not found in chat data. Reload the chat.', 'IF Imgen');
+    if (i < 0) return toastr.warning(t('chat_img_not_found'), 'IF Imgen');
     viewer.open(items, i);
 }, true);
 
@@ -112,7 +112,7 @@ function addMessageButton(messageId) {
     if (!bar || bar.querySelector('.ifimgen_msg_btn')) return;
     const btn = document.createElement('div');
     btn.className = 'mes_button ifimgen_msg_btn fa-solid fa-images';
-    btn.title = 'IF Imgen: generate images for this message (again = regenerate all; Shift+click: remove images). Click an image to regenerate just that one.';
+    btn.title = t('msg_btn_title');
     btn.addEventListener('click', async e => {
         const id = Number(btn.closest('.mes')?.getAttribute('mesid'));
         if (e.shiftKey) return pipeline.clear(id);
@@ -188,7 +188,7 @@ async function mountFloaterSafe() {
 // ---- slash command
 getContext().SlashCommandParser?.addCommandObject?.(getContext().SlashCommand.fromProps({
     name: 'ifimgen',
-    helpString: 'Generate IF Imgen images for the last character reply. Optional: /ifimgen count=2 preset=action_wide',
+    helpString: t('slash_help'),
     namedArgumentList: [
         getContext().SlashCommandNamedArgument.fromProps({ name: 'count', description: 'images', typeList: [getContext().ARGUMENT_TYPE.NUMBER], isRequired: false }),
         getContext().SlashCommandNamedArgument.fromProps({ name: 'preset', description: 'preset id', typeList: [getContext().ARGUMENT_TYPE.STRING], isRequired: false }),
@@ -223,7 +223,7 @@ jQuery(async () => {
         e.preventDefault(); e.stopPropagation(); window.open(REPO_URL, '_blank', 'noopener');
     });
     const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, discordUrl: DISCORD_URL, kofiUrl: KOFI_URL };
-    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); floater?.refresh(); };
+    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); document.querySelectorAll('.ifimgen_msg_btn').forEach(b => b.title = t('msg_btn_title')); floater?.refresh(); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
     drawerDeps.onAlignChange = v => applyAlign(v);
     drawerDeps.onFloaterChange = on => floater?.setEnabled(on);
