@@ -25,9 +25,21 @@ const MAIN_TABS = () => [
     { tab: 'generate', label: t('tab_generate'), icon: 'sparkles' },
 ];
 const BACKENDS = [
-    { id: 'sd', label: 'A1111 / proxy', icon: 'box' },
-    { id: 'comfy', label: 'ComfyUI', icon: 'workflow' },
+    { id: 'sd', label: 'A1111 / ComfyUI', icon: 'box' },
     { id: 'nai', label: 'NovelAI', icon: 'cloud' },
+];
+// Suggestions for the sampler / scheduler fields (A1111 names + ComfyUI names). Free text is still allowed.
+const SD_SAMPLERS = ['Euler a', 'Euler', 'DPM++ 2M', 'DPM++ 2M SDE', 'DPM++ SDE', 'DPM++ 3M SDE', 'DPM2 a', 'LMS', 'Heun', 'DDIM', 'UniPC', 'Restart',
+    'euler', 'euler_ancestral', 'dpmpp_2m', 'dpmpp_2m_sde', 'dpmpp_sde', 'dpmpp_3m_sde', 'dpmpp_2s_ancestral', 'heun', 'lms', 'ddim', 'uni_pc', 'res_multistep', 'lcm'];
+const SD_SCHEDULERS = ['Automatic', 'Karras', 'Exponential', 'SGM Uniform', 'Simple', 'Normal', 'DDIM', 'Beta', 'Align Your Steps',
+    'simple', 'normal', 'karras', 'exponential', 'sgm_uniform', 'ddim_uniform', 'beta', 'linear_quadratic', 'kl_optimal'];
+// Common SDXL / Illustrious / NAI / Krea sizes.
+const SIZE_PRESETS = [
+    { label: 'Portrait 832×1216', w: 832, h: 1216 }, { label: 'Portrait 896×1152', w: 896, h: 1152 }, { label: 'Portrait 768×1344', w: 768, h: 1344 },
+    { label: 'Portrait HD 1024×1536', w: 1024, h: 1536 }, { label: 'Portrait HD 1216×1532', w: 1216, h: 1532 },
+    { label: 'Square 1024×1024', w: 1024, h: 1024 }, { label: 'Square HD 1536×1536', w: 1536, h: 1536 },
+    { label: 'Landscape 1216×832', w: 1216, h: 832 }, { label: 'Landscape 1152×896', w: 1152, h: 896 }, { label: 'Landscape 1344×768', w: 1344, h: 768 },
+    { label: 'Landscape HD 1536×1024', w: 1536, h: 1024 }, { label: 'Landscape HD 1532×1216', w: 1532, h: 1216 },
 ];
 
 /**
@@ -96,34 +108,40 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     $('ifimgen_activate').addEventListener('click', () => { c.backend = viewing; save(); renderBackendTabs(); status('ifimgen_conn_status', `${BACKENDS.find(b => b.id === viewing).label} is now the active image API.`, 'ok'); });
     bind('ifimgen_sd_url', () => c.sd.url, v => c.sd.url = v.trim());
     bind('ifimgen_sd_auth', () => c.sd.auth, v => c.sd.auth = v.trim());
-    bind('ifimgen_comfy_url', () => c.comfy.url, v => c.comfy.url = v.trim());
-    bind('ifimgen_comfy_inject', () => c.comfy.injectLoras, v => c.comfy.injectLoras = v);
-    // ---- ComfyUI workflow: textarea + load file + auto-map placeholders
-    const wfTa = $('ifimgen_comfy_wf');
+    // ---- ComfyUI workflow inside the A1111 tab: toggle + textarea + load file + auto-map placeholders
+    const wfTa = $('ifimgen_sd_wf');
+    const showWf = () => { root.querySelector('#ifimgen_sd_wf_box').style.display = c.sd.useWorkflow ? '' : 'none'; };
     const showWfInfo = () => {
-        if (!String(c.comfy.workflow ?? '').trim()) return status('ifimgen_wf_status', t('st_wf_empty'));
-        const info = workflowInfo(c.comfy.workflow);
+        if (!String(c.sd.workflow ?? '').trim()) return status('ifimgen_wf_status', t('st_wf_empty'));
+        const info = workflowInfo(c.sd.workflow);
         if (!info.ok) return status('ifimgen_wf_status', info.error, 'error');
         status('ifimgen_wf_status', `${info.nodeCount} ${t('st_wf_nodes')} · ${info.placeholders.length ? info.placeholders.map(p => `%${p}%`).join(' ') : t('st_wf_no_ph')}${info.error ? ` — ${info.error}` : ''}`, info.error ? 'error' : 'ok');
     };
-    bind('ifimgen_comfy_wf', () => c.comfy.workflow, v => { c.comfy.workflow = v; showWfInfo(); });
+    bind('ifimgen_sd_use_wf', () => c.sd.useWorkflow, v => { c.sd.useWorkflow = v; showWf(); loadParams(); });
+    bind('ifimgen_sd_inject', () => c.sd.injectLoras, v => c.sd.injectLoras = v);
+    bind('ifimgen_sd_wf', () => c.sd.workflow, v => { c.sd.workflow = v; showWfInfo(); }, 'input');
+    const setWorkflow = text => { c.sd.workflow = text; wfTa.value = text; save(); showWfInfo(); };
     $('ifimgen_wf_load').addEventListener('change', async e => {
         const f = e.target.files?.[0]; if (!f) return;
-        try { c.comfy.workflow = await readFileAsText(f); wfTa.value = c.comfy.workflow; save(); showWfInfo(); }
+        try { setWorkflow(await readFileAsText(f)); status('ifimgen_wf_status', `${t('st_wf_loaded')} ${f.name} — ${$('ifimgen_wf_status').textContent}`, 'ok'); }
         catch (err) { status('ifimgen_wf_status', err.message, 'error'); }
         e.target.value = '';
     });
+    $('ifimgen_wf_paste').addEventListener('click', async () => {
+        try { const text = await navigator.clipboard.readText(); if (!text.trim()) throw new Error(t('st_wf_clip_empty')); setWorkflow(text); }
+        catch (err) { status('ifimgen_wf_status', err.message, 'error'); }
+    });
     $('ifimgen_wf_automap').addEventListener('click', () => {
-        const r = autoMapWorkflow(c.comfy.workflow);
+        const r = autoMapWorkflow(c.sd.workflow);
         if (!r.nodes) return status('ifimgen_wf_status', r.error, 'error');
-        c.comfy.workflow = r.text; wfTa.value = r.text;
+        c.sd.workflow = r.text; wfTa.value = r.text;
         // The checkpoint the workflow shipped with becomes the default model unless one is already chosen.
-        if (r.originalModel) { if (!c.comfy.models.includes(r.originalModel)) c.comfy.models.push(r.originalModel); if (!c.comfy.model) c.comfy.model = r.originalModel; }
+        if (r.originalModel) { if (!c.sd.models.includes(r.originalModel)) c.sd.models.push(r.originalModel); if (!c.sd.model) c.sd.model = r.originalModel; }
         save(); fillModels(); showWfInfo();
         const done = Object.entries(r.mapped).map(([k, id]) => `${k}→[${id}]`).join(', ');
         status('ifimgen_wf_status', `${t('st_wf_mapped')}: ${done}${r.error ? ` — ${r.error}` : ''}`, r.error ? 'error' : 'ok');
     });
-    showWfInfo();
+    showWf(); showWfInfo();
     bind('ifimgen_nai_key', () => c.nai.apiKey, v => c.nai.apiKey = v.trim());
     bind('ifimgen_nai_variety', () => c.nai.variety, v => c.nai.variety = v);
     $('ifimgen_test').addEventListener('click', async () => {
@@ -150,8 +168,14 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         $('ifimgen_p_sampler_nai').style.display = naiMode ? '' : 'none';
         $('ifimgen_p_scheduler_nai').style.display = naiMode ? '' : 'none';
         if (naiMode) { fillSelect($('ifimgen_p_sampler_nai'), NAI_SAMPLERS, p.sampler); fillSelect($('ifimgen_p_scheduler_nai'), NAI_SCHEDULERS, p.scheduler); }
-        else { $('ifimgen_p_sampler_sd').value = p.sampler; $('ifimgen_p_scheduler_sd').value = p.scheduler; }
+        else {
+            $('ifimgen_p_sampler_sd').value = p.sampler; $('ifimgen_p_scheduler_sd').value = p.scheduler;
+            // Suggestion lists: names fetched from ComfyUI first (workflow mode), then the built-in A1111 + Comfy names.
+            const dl = (id, fetched, builtin) => { $(id).innerHTML = [...new Set([...(fetched ?? []), ...builtin])].map(x => `<option value="${escapeHtml(x)}">`).join(''); };
+            dl('ifimgen_dl_samplers', c.sd.samplers, SD_SAMPLERS); dl('ifimgen_dl_schedulers', c.sd.schedulers, SD_SCHEDULERS);
+        }
         for (const k of ['steps', 'cfg', 'width', 'height']) $(`ifimgen_p_${k}`).value = p[k];
+        syncSizePreset();
         const isDefault = editingModel && editingModel === c[viewing].model;
         $('ifimgen_model_badge').style.display = isDefault ? '' : 'none';
         $('ifimgen_profile_badge').textContent = hasProfile(settings, viewing, editingModel) ? t('chip_profile_saved') : t('chip_fallback');
@@ -169,11 +193,29 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         };
     }
     modelSel.addEventListener('change', () => { editingModel = modelSel.value; loadParams(); });
+    // ---- size presets <-> width/height fields
+    const sizeSel = $('ifimgen_p_size');
+    fillSelect(sizeSel, [{ value: '', label: t('opt_size_custom') }, ...SIZE_PRESETS.map(s => ({ value: `${s.w}x${s.h}`, label: s.label }))], '');
+    function syncSizePreset() {
+        const key = `${Number($('ifimgen_p_width').value)}x${Number($('ifimgen_p_height').value)}`;
+        sizeSel.value = SIZE_PRESETS.some(s => `${s.w}x${s.h}` === key) ? key : '';
+    }
+    sizeSel.addEventListener('change', () => {
+        const s = SIZE_PRESETS.find(x => `${x.w}x${x.h}` === sizeSel.value);
+        if (s) { $('ifimgen_p_width').value = s.w; $('ifimgen_p_height').value = s.h; }
+    });
+    $('ifimgen_p_width').addEventListener('input', syncSizePreset);
+    $('ifimgen_p_height').addEventListener('input', syncSizePreset);
     $('ifimgen_fetch_models').addEventListener('click', async () => {
         status('ifimgen_model_status', 'Fetching…');
         try {
-            const models = await backends.get(viewing).fetchModels();
-            if (viewing !== 'nai') c[viewing].models = models;
+            const be = backends.get(viewing);
+            const models = await be.fetchModels();
+            if (viewing === 'sd') {
+                c.sd.models = models;
+                // Workflow mode: also pull sampler / scheduler names from ComfyUI for the suggestion lists.
+                try { c.sd.samplers = await be.fetchSamplers(); c.sd.schedulers = await be.fetchSchedulers(); } catch { /* optional */ }
+            }
             if (!c[viewing].model && models[0]) c[viewing].model = models[0];
             save(); fillModels();
             status('ifimgen_model_status', `${models.length} model(s) available.`, 'ok');
@@ -591,16 +633,17 @@ function settingsPanel() {
                 <div class="ifimgen-row"><label for="ifimgen_sd_url">${t('lbl_url')}</label><input id="ifimgen_sd_url" class="text_pole" type="text" placeholder="http://127.0.0.1:7861"></div>
                 <div class="ifimgen-row"><label for="ifimgen_sd_auth">${t('lbl_auth')}</label><input id="ifimgen_sd_auth" class="text_pole" type="password" autocomplete="off"></div>
                 <div class="ifimgen-note">${t('note_sd')}</div>
-            </div>
-            <div data-backend="comfy" style="display:none">
-                <div class="ifimgen-row"><label for="ifimgen_comfy_url">${t('lbl_url')}</label><input id="ifimgen_comfy_url" class="text_pole" type="text" placeholder="http://127.0.0.1:8188"></div>
-                <div class="ifimgen-row"><label>${t('lbl_workflow')}</label>
-                    ${fileBtn({ inputId: 'ifimgen_wf_load', title: t('btn_wf_load') })}
-                    ${btn({ id: 'ifimgen_wf_automap', icon: 'sparkles', label: t('btn_wf_automap'), title: t('tip_wf_automap') })}</div>
-                <textarea id="ifimgen_comfy_wf" class="text_pole ifimgen-wf" rows="8" spellcheck="false" placeholder='{ "3": { "class_type": "KSampler", "inputs": { "seed": "%seed%", "steps": "%steps%", ... } }, ... }'></textarea>
-                <div id="ifimgen_wf_status" class="ifimgen-status"></div>
-                <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_comfy_inject" type="checkbox"> ${t('lbl_inject_loras')}</label></div>
-                <div class="ifimgen-note">${t('note_comfy')}</div>
+                <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_sd_use_wf" type="checkbox"> ${t('lbl_use_workflow')}</label></div>
+                <div id="ifimgen_sd_wf_box" style="display:none">
+                    <div class="ifimgen-row"><label>${t('lbl_workflow')}</label>
+                        ${fileBtn({ inputId: 'ifimgen_wf_load', title: t('btn_wf_load') })}
+                        ${btn({ id: 'ifimgen_wf_paste', icon: 'clipboard', title: t('btn_wf_paste') })}
+                        ${btn({ id: 'ifimgen_wf_automap', icon: 'sparkles', label: t('btn_wf_automap'), title: t('tip_wf_automap') })}</div>
+                    <textarea id="ifimgen_sd_wf" class="text_pole ifimgen-wf" rows="8" spellcheck="false" placeholder='{ "3": { "class_type": "KSampler", "inputs": { "seed": "%seed%", "steps": "%steps%", ... } }, ... }'></textarea>
+                    <div id="ifimgen_wf_status" class="ifimgen-status"></div>
+                    <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_sd_inject" type="checkbox"> ${t('lbl_inject_loras')}</label></div>
+                    <div class="ifimgen-note">${t('note_comfy')}</div>
+                </div>
             </div>
             <div data-backend="nai" style="display:none">
                 <div class="ifimgen-row"><label for="ifimgen_nai_key">${t('lbl_nai_key')}</label><input id="ifimgen_nai_key" class="text_pole" type="password" autocomplete="off"></div>
@@ -617,9 +660,10 @@ function settingsPanel() {
             ${boxTitle('box', `${t('box_model')} — <span id="ifimgen_model_be"></span>`, `<span id="ifimgen_model_badge" class="ifimgen-chip active" style="display:none">${t('chip_default')}</span>`)}
             <div class="ifimgen-row">${btn({ id: 'ifimgen_fetch_models', icon: 'refresh', title: t('btn_fetch_models') })}<select id="ifimgen_model" class="text_pole"></select></div>
             <div class="ifimgen-grid2">
-                <div class="ifimgen-row"><label>${t('lbl_sampler')}</label><input id="ifimgen_p_sampler_sd" class="text_pole" type="text"><select id="ifimgen_p_sampler_nai" class="text_pole" style="display:none"></select></div>
-                <div class="ifimgen-row"><label>${t('lbl_scheduler')}</label><input id="ifimgen_p_scheduler_sd" class="text_pole" type="text"><select id="ifimgen_p_scheduler_nai" class="text_pole" style="display:none"></select></div>
+                <div class="ifimgen-row"><label>${t('lbl_sampler')}</label><input id="ifimgen_p_sampler_sd" class="text_pole" type="text" list="ifimgen_dl_samplers" autocomplete="off"><datalist id="ifimgen_dl_samplers"></datalist><select id="ifimgen_p_sampler_nai" class="text_pole" style="display:none"></select></div>
+                <div class="ifimgen-row"><label>${t('lbl_scheduler')}</label><input id="ifimgen_p_scheduler_sd" class="text_pole" type="text" list="ifimgen_dl_schedulers" autocomplete="off"><datalist id="ifimgen_dl_schedulers"></datalist><select id="ifimgen_p_scheduler_nai" class="text_pole" style="display:none"></select></div>
                 ${numRow('ifimgen_p_steps', t('lbl_steps'), 1, 150)}${numRow('ifimgen_p_cfg', t('lbl_cfg'), 0, 30, 0.5)}
+                <div class="ifimgen-row ifimgen-span2"><label for="ifimgen_p_size">${t('lbl_size')}</label><select id="ifimgen_p_size" class="text_pole"></select></div>
                 ${numRow('ifimgen_p_width', t('lbl_width'), 256, 2048, 64)}${numRow('ifimgen_p_height', t('lbl_height'), 256, 2048, 64)}
             </div>
             <div class="ifimgen-row">

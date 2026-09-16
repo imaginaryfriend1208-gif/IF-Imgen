@@ -9,7 +9,6 @@ export const SETTINGS_VERSION = 2;
 export const PARAM_KEYS = ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height'];
 export const PARAM_DEFAULTS = {
     sd: { sampler: 'Euler a', scheduler: 'Automatic', steps: 20, cfg: 6, width: 832, height: 1216 },
-    comfy: { sampler: 'euler', scheduler: 'simple', steps: 20, cfg: 5, width: 832, height: 1216 },
     nai: { sampler: 'k_euler_ancestral', scheduler: 'karras', steps: 28, cfg: 5, width: 832, height: 1216 },
 };
 
@@ -19,11 +18,12 @@ export function defaultSettings() {
         enabled: true,
         language: 'en',        // UI language: 'en' | 'vi'
         connection: {
-            backend: 'sd', // 'sd' | 'comfy' | 'nai'  (the ACTIVE image API)
-            sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [] },
-            // ComfyUI direct: `workflow` is the API-format JSON text with %placeholders% (see src/comfy.js).
+            backend: 'sd', // 'sd' | 'nai'  (the ACTIVE image API)
+            // sd = one URL, two request styles. useWorkflow=false -> A1111 txt2img. useWorkflow=true + workflow ->
+            // the API-format ComfyUI workflow (with %placeholders%, see src/comfy.js) is sent to ComfyUI at that URL.
             // injectLoras: <lora:name:w> tags from entities/styles become LoraLoaderModelOnly nodes in front of the sampler.
-            comfy: { url: 'http://127.0.0.1:8188', model: '', models: [], workflow: '', injectLoras: true },
+            // samplers / schedulers: names fetched from ComfyUI (suggestions for the profile fields).
+            sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [], useWorkflow: false, workflow: '', injectLoras: true, samplers: [], schedulers: [] },
             // Optional HTTP header sent with every SD/Comfy request. Fill it in
             // Settings (Image API box) when your proxy supports it, e.g. name
             // X-IF-Imgen / value raw-prompt -> the proxy skips character
@@ -32,7 +32,7 @@ export function defaultSettings() {
             nai: { apiKey: '', model: 'nai-diffusion-4-5-full', variety: false },
             // profiles[backend][modelName] = { sampler, scheduler, steps, cfg, width, height }
             // profiles[backend]['*'] = fallback for models without a saved profile
-            profiles: { sd: {}, comfy: {}, nai: {} },
+            profiles: { sd: {}, nai: {} },
             llm: {
                 mode: 'st_profile', // 'st_profile' | 'custom'
                 profileId: '',
@@ -91,6 +91,15 @@ export function migrate(s) {
             s.connection.profiles[be]['*'] = p;
             if (b.model) s.connection.profiles[be][b.model] ??= { ...p };
         }
+    }
+    // v0.10.0 shipped a separate "comfy" backend for one release; fold its workflow into sd (same version, no bump).
+    const legacy = s.connection?.comfy;
+    if (legacy && typeof legacy === 'object') {
+        const sd = s.connection.sd;
+        if (legacy.workflow && !sd.workflow) { sd.workflow = legacy.workflow; sd.useWorkflow = true; if (legacy.url) sd.url = legacy.url; if (legacy.model && !sd.model) sd.model = legacy.model; }
+        if (s.connection.backend === 'comfy') s.connection.backend = 'sd';
+        if (s.connection.profiles?.comfy) { s.connection.profiles.sd = { ...s.connection.profiles.comfy, ...s.connection.profiles.sd }; delete s.connection.profiles.comfy; }
+        delete s.connection.comfy;
     }
     s.version = SETTINGS_VERSION;
     return s;

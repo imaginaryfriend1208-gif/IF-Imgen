@@ -22,8 +22,8 @@ export function stripKeywordTokens(scene, entities) {
 }
 
 /**
- * @param {{ scene:string, characters:object[], personas:object[], style:object|null, settings:object, backend:'sd'|'comfy'|'nai', merged?:boolean }} a
- *   backend 'comfy' keeps <lora:...> tags in the prompt; the Comfy backend turns them into LoRA nodes.
+ * @param {{ scene:string, characters:object[], personas:object[], style:object|null, settings:object, backend:'sd'|'nai', merged?:boolean }} a
+ *   <lora:...> tags stay in the prompt; in workflow mode the sd backend turns them into LoRA nodes.
  *   merged=true: `scene` already contains the cast (refine mode) -> character/persona fragments are NOT prepended;
  *   their LoRAs and negatives still apply. Quality prefix and style are always handled here.
  * @returns {{ prompt:string, negative:string }}

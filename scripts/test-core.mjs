@@ -144,7 +144,13 @@ test('settings migration v1 -> v2 moves sampler/steps into model profiles', () =
     assert.equal(m.connection.profiles.nai['*'], undefined, 'nai had no legacy params');
     assert.equal(m.generate.useNegative, true, 'new keys filled');
     const fresh = ensureSettings({});
-    assert.equal(fresh.version, SETTINGS_VERSION); assert.deepEqual(fresh.connection.profiles, { sd: {}, comfy: {}, nai: {} });
+    assert.equal(fresh.version, SETTINGS_VERSION); assert.deepEqual(fresh.connection.profiles, { sd: {}, nai: {} });
+    assert.equal(fresh.connection.sd.useWorkflow, false);
+    // v0.10.0 transitional "comfy" backend folds into sd (workflow, url, model, profiles, active backend).
+    const old = ensureSettings({ IF_Imgen: { version: 2, connection: { backend: 'comfy', sd: { url: 'http://a', model: '' }, comfy: { url: 'http://c:8188', model: 'k.safetensors', workflow: '{"1":{"class_type":"KSampler","inputs":{}}}' }, profiles: { sd: {}, comfy: { 'k.safetensors': { steps: 8 } }, nai: {} } } } });
+    assert.equal(old.connection.backend, 'sd'); assert.equal(old.connection.sd.useWorkflow, true); assert.equal(old.connection.sd.url, 'http://c:8188');
+    assert.equal(old.connection.sd.model, 'k.safetensors'); assert.equal(old.connection.profiles.sd['k.safetensors'].steps, 8);
+    assert.equal(old.connection.comfy, undefined); assert.equal(old.connection.profiles.comfy, undefined);
 });
 
 test('image snippet: bare form (no title), URL-encoded; legacy title form still parsed + migrated', () => {
