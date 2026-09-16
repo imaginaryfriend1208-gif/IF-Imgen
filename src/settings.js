@@ -102,6 +102,11 @@ export function migrate(s) {
         if (s.connection.profiles?.comfy) { s.connection.profiles.sd = { ...s.connection.profiles.comfy, ...s.connection.profiles.sd }; delete s.connection.profiles.comfy; }
         delete s.connection.comfy;
     }
+    // Batch refine (v0.10) needs {{count}} and the SCENE SETTING contract. A stored refine system without
+    // {{count}} is the pre-batch default (or an edit of it) and makes the LLM merge N drafts into ONE prompt.
+    if (s.generate && typeof s.generate.refineSystem === 'string' && !s.generate.refineSystem.includes('{{count}}')) {
+        s.generate.refineSystem = DEFAULT_REFINE_SYSTEM;
+    }
     s.version = SETTINGS_VERSION;
     return s;
 }

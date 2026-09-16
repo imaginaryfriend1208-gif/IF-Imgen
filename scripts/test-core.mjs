@@ -202,7 +202,7 @@ test('refine prompt: cast carries base look + only referenced details; style + e
     const scene = '$yenka walks away in the rain showing $yenka.back';
     const ex = expandScene({ scene, characters: [rosario], personas: [yenka] });
     const { system, user } = buildRefinePrompt({ system: '', dialect: 'natural', scene, expanded: ex.text, used: ex.used, characters: [rosario], personas: [yenka], style: style });
-    assert.ok(system.includes('60-110 words') && !system.includes('{{'));
+    assert.ok(system.includes('natural-language paragraph') && !system.includes('{{'));
     assert.ok(user.includes('Yenka (user persona): Yenka is a small girl'));
     assert.ok(user.includes('- back: a big tattoo') && !user.includes('- outfit:'), 'only referenced facets listed');
     assert.ok(user.includes('Rosario (character): a tall mature man') && !user.includes('- front:'));
@@ -227,6 +227,13 @@ test('batch refine: ONE call carries the scene setting + all shots; facets of ev
     assert.ok(st.system.includes('WEARING') && st.system.includes('PEOPLE PRESENT'));
     assert.ok(st.user.includes('outfit: white button-up shirt') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
     assert.equal(defaultSettings().generate.settingSystem, st.system);
+    assert.ok(system.includes('SETTING wins'), 'refine: setting overrides drafts / cast details');
+    assert.ok(st.system.includes('WHOLE reply'), 'setting: one wardrobe per person for the whole reply');
+    // stale (pre-batch) refine system stored in settings -> replaced by the batch default on load
+    const stale = { IF_Imgen: { ...defaultSettings(), generate: { ...defaultSettings().generate, refineSystem: 'You write prompts... Merge them into ONE final image prompt.' } } };
+    assert.equal(ensureSettings(stale).generate.refineSystem, defaultSettings().generate.refineSystem);
+    const custom = { IF_Imgen: { ...defaultSettings(), generate: { ...defaultSettings().generate, refineSystem: 'mine {{count}} {{dialect_rule}}' } } };
+    assert.equal(ensureSettings(custom).generate.refineSystem, 'mine {{count}} {{dialect_rule}}', 'a custom batch-aware system is kept');
 });
 
 test('compilePrompt merged=true: cast fragments not prepended (refine already merged them), LoRA/negative/style still applied', () => {

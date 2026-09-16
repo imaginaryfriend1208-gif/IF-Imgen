@@ -110,7 +110,8 @@ For EACH person present, one block:
   WEARING: the exact clothing right now and its state (buttoned, soaked, pushed off one shoulder, removed...). If the CAST lists an outfit detail for that person, use it unless the text clearly says otherwise. If they are undressed, say so.
   DOING: what they do over the course of this reply, in order.
   POSE / POSITION: body position and where they are relative to the others and to the furniture.
-Rules: state only what the text and cast say or clearly imply; never invent new people; never describe fixed looks (hair, eyes, body, face); clothing does not change between paragraphs unless the text says it does. No preamble, no markdown, no quotes.`;
+  If clothing changes during the reply (undressing, getting dressed, soaked), write the change under DOING with the paragraph number, and put the final state under WEARING.
+Rules: state only what the text and cast say or clearly imply; never invent new people or garments; never describe fixed looks (hair, eyes, body, face); one WEARING line per person is the wardrobe for the WHOLE reply — every image must use it. No preamble, no markdown, no quotes.`;
 
 /**
  * Build the scene-setting messages (one call per message, shared by all its images).
@@ -137,8 +138,9 @@ export function buildSettingPrompt(a) {
 
 export const DEFAULT_REFINE_SYSTEM = `You write prompts for an image generation model. You receive a SCENE SETTING (the authoritative description of the place, who is present, what each person wears and does), a CAST (people with their base look and the details that matter), an optional STYLE, and {{count}} SHOT DRAFT(S) written by a director. Write one final image prompt per shot.
 Rules:
-- The SCENE SETTING is the single source of truth: the same location, the same people and the same clothing (and clothing state) appear in EVERY prompt. Never change an outfit between shots unless the setting or that draft explicitly says so.
-- Keep every visual fact from the cast and the draft; do not invent new people or change what they do.
+- The SCENE SETTING is the single source of truth: the same location, the same people and the same clothing (and clothing state) appear in EVERY prompt. Never change an outfit between shots unless the setting explicitly says it changes at that moment.
+- A SHOT DRAFT only chooses the moment, the action, the framing and the camera. If a draft or a cast detail contradicts the setting about place, who is present or what someone wears, the SETTING wins and the contradiction is dropped.
+- Keep every visual fact from the cast and the draft that does not conflict with the setting; do not invent new people, garments or props, or change what they do.
 - Fold the base look and the listed details into the description of the person naturally (e.g. "a small girl with dark parted hair ... a big tattoo on her left shoulder blade visible through the wet shirt").
 - Include only what would be visible in that shot; if a person is seen from behind, do not describe the face.
 - Do not repeat the same fact twice inside one prompt. No preamble, no explanation, no markdown fence.
@@ -148,7 +150,7 @@ OUTPUT FORMAT (strict): reply with ONLY a JSON array of exactly {{count}} object
 
 export const REFINE_DIALECT_RULES = {
     tags: 'Each prompt is comma-separated danbooru-style tags (lowercase, spaces not underscores), 20-45 tags, most important first: count tags, then the people with their look/details, then actions, poses, expressions, clothing state, setting, lighting, camera.',
-    natural: 'Each prompt is one vivid natural-language paragraph of 60-110 words: people first (look + details + action), then setting, lighting, camera.',
+    natural: 'Each prompt is one vivid natural-language paragraph of roughly 70-130 words (do not count words, just stay compact): people first (look + clothing from the setting + details + action), then setting, lighting, camera.',
 };
 
 /**

@@ -162,7 +162,24 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     const logCompiled = (c, label = '') => log(`compiled${label} [chars: ${c.ents.characters.map(e => e.name).join(',') || '-'} | personas: ${c.ents.personas.map(e => e.name).join(',') || '-'} | style: ${c.ents.style?.name ?? '-'}]`, c.prompt);
 
-    /** Compile + render ONE scene (single regenerate). `setting` = stored scene setting of the message, reused for continuity. */
+    /**
+     * Scene setting for a regenerate on message `messageId`: the one stored on its records, or (refine mode)
+     * a fresh one written from the message text so old images / edited scenes still get continuity.
+     */
+    async function settingFor(ctx, messageId, stored, signal, status) {
+        if (stored || settings.generate.mode !== 'refine') return stored || '';
+        const msg = ctx.chat[messageId];
+        const paragraphs = splitParagraphs(stripImages(msg?.mes ?? ''), settings.generate.minParagraphChars);
+        if (!paragraphs.length) return '';
+        status('writing scene setting…');
+        const scenes = records(msg).map(r => r.scene).filter(Boolean).join('\n');
+        const ents = resolveEntities(settings, { text: scenes, ...chatIdentity(ctx) });
+        const setting = await buildSetting(ctx, { paragraphs, context: contextText(ctx, messageId, settings.generate.contextMessages), ents }, signal);
+        log('scene setting (regen)', setting);
+        return setting;
+    }
+
+    /** Compile + render ONE scene (single regenerate). `setting` = scene setting of the message, reused for continuity. */
     async function render(ctx, { scene, p, setting = '' }, signal, status) {
         const backend = backends.active();
         if (settings.generate.mode === 'refine') status('refining prompt…');
@@ -263,7 +280,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         begin(messageId, controller);
         const status = s => { log(`#${messageId} regen ${s}`); note(s); onStatus?.(s); };
         try {
-            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting: rec?.setting ?? '' }, controller.signal, status);
+            const setting = await settingFor(ctx, messageId, rec?.setting ?? '', controller.signal, status);
+            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting }, controller.signal, status);
             const list = records(msg);
             const i = list.findIndex(r => r.url === url);
             if (i >= 0) list[i] = fresh; else list.push(fresh);
@@ -301,7 +319,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const skipped = list.length - todo.length;
         try {
             if (!todo.length) { status('done (0)'); return { regenerated, skipped }; }
-            const setting = todo.find(r => r.setting)?.setting ?? '';
+            const setting = await settingFor(ctx, messageId, todo.find(r => r.setting)?.setting ?? '', controller.signal, status);
             if (settings.generate.mode === 'refine') status(`refining ${todo.length} prompt${todo.length > 1 ? 's' : ''} in one call…`);
             const compiled = await compileScenes(ctx, todo.map(r => r.scene), backends.active().id, controller.signal, { setting });
             for (let i = 0; i < todo.length; i++) {
