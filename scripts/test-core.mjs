@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 // IF Imgen - pure-module tests (no DOM, no ST). Run: node scripts/test-core.mjs
 import assert from 'node:assert/strict';
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
-import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset } from '../src/presets.js';
+import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset, extractJsonArray } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
 import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
@@ -366,6 +366,17 @@ test('comfy: extractLoras pulls <lora:name:w> tags; injectLoras chains LoraLoade
     assert.equal(nodes['ifimgen_lora_1'].inputs.strength_model, 0.7);
     assert.deepEqual(injectLoras(structuredClone(KREA), []).injected, []);
     assert.match(injectLoras({ a: { class_type: 'SaveImage', inputs: {} } }, loras).skipped, /KSampler/);
+});
+
+test('parsePlan / parseRefined survive unescaped inner quotes, fences and prose (real planner failure)', () => {
+    const bad = 'Here you go:\n```json\n[{"p": 3, "prompt": "$user pushing at his chest, "no, no" plea, a 4-year-old boy with tear-streaked face crouched nearby"}, {"p": 5, "prompt": "he says \\"stay\\" and grabs her wrist, [wide shot]"}]\n```';
+    const plan = parsePlan(bad, [1, 2, 3, 4, 5]);
+    assert.deepEqual(plan.map(x => x.p), [3, 5]);
+    assert.ok(plan[0].prompt.includes('"no, no" plea') && plan[1].prompt.includes('[wide shot]'));
+    assert.deepEqual(parseRefined('[{"i":1,"prompt":"she whispers "come here" softly"},{"i":2,"prompt":"ok"}]', 2), ['she whispers "come here" softly', 'ok']);
+    assert.equal(extractJsonArray('no json here'), null);
+    assert.deepEqual(extractJsonArray('[{"a":"x [1] y"}]'), [{ a: 'x [1] y' }], 'brackets inside strings are fine');
+    assert.deepEqual(parsePlan("I'm not able to fulfill this request.", [1, 2]), [], 'refusal -> empty plan (pipeline reports it)');
 });
 
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }
