@@ -14,7 +14,7 @@ import { t } from './i18n.js';
 import { escapeHtml } from './util.js';
 import { createEntity, upsertEntity, removeEntity, LORA_POSITIONS } from './entities.js';
 
-const BTN = 52; // button diameter (px) - keep in sync with .ifimgen-fl-btn
+const BTN = 40; // button diameter (px) - keep in sync with .ifimgen-fl-btn
 
 /**
  * @param {{ settings:object, save:Function, pipeline:object, getContext:Function,
@@ -89,7 +89,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
                 ${field('lorapos', t('lbl_lorapos'), `<select class="text_pole" data-f="loraPosition">${LORA_POSITIONS.map(p => `<option value="${p}"${p === e.loraPosition ? ' selected' : ''}>${p}</option>`).join('')}</select>`)}
             </div>
             <div class="ifimgen-fl-status ifimgen-fl-edit-status" data-edit-status></div>
-            <div class="ifimgen-fl-row">
+            <div class="ifimgen-fl-row ifimgen-fl-row-mini">
                 <button type="button" class="ifimgen-fl-act primary" data-act="style-save">${ICONS.save}<span><b>${t('btn_save')}</b></span></button>
                 <button type="button" class="ifimgen-fl-act${isDef ? ' active' : ''}" data-act="style-default"${cur ? '' : ' disabled'}>${ICONS.star}<span><b>${isDef ? t('btn_default_on') : t('btn_set_default')}</b></span></button>
                 <button type="button" class="ifimgen-fl-act danger" data-act="style-delete"${cur ? '' : ' disabled'} title="${t('btn_delete')}">${ICONS.trash}<span><b>${t('btn_delete')}</b></span></button>
@@ -143,11 +143,13 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         const busy = lastState.running > 0;
         pop.innerHTML = `
             <div class="ifimgen-fl-status">${busy ? statusText(lastState) : t('fl_title')}</div>
-            ${item('regen', 'refresh', t('fl_regen'), t('fl_regen_sub'), 'primary')}
-            ${item('gen', 'sparkles', t('fl_generate'), t('fl_generate_sub'))}
+            <div class="ifimgen-fl-row">
+                ${item('regen', 'refresh', t('fl_regen'), t('fl_regen_sub'), 'primary')}
+                ${item('gen', 'sparkles', t('fl_generate'), t('fl_generate_sub'))}
+            </div>
             ${busy ? item('cancel', 'x', t('fl_cancel', { n: lastState.running }), '', 'danger') : ''}
             ${styleRow()}
-            <div class="ifimgen-fl-row">
+            <div class="ifimgen-fl-row ifimgen-fl-row-mini">
                 ${item('gallery', 'images', t('fl_gallery'))}
                 ${item('collapse', 'image', g.collapseImages ? t('fl_unfold') : t('fl_fold'))}
                 ${item('settings', 'settings', t('fl_settings'))}
