@@ -379,6 +379,17 @@ test('parsePlan / parseRefined survive unescaped inner quotes, fences and prose 
     assert.deepEqual(parsePlan("I'm not able to fulfill this request.", [1, 2]), [], 'refusal -> empty plan (pipeline reports it)');
 });
 
+
+test('parsePlan: prompts closed with an ESCAPED quote (real planner reply) fall back to loose object parsing', () => {
+    // 4 of 5 prompts ended with  !\"}  -> strict + repair both fail with "Unterminated string"
+    const bs = String.fromCharCode(92);
+    const real = '[{"p":6,"prompt":"arches off the sofa!' + bs + '"},{"p":8,"prompt":"gloves drip, late light!' + bs + '"},{"p":10,"prompt":"normal one"},{"p":12,"prompt":"says ' + bs + '"stay' + bs + '" and "raw" quotes!' + bs + '"}]';
+    const r = parsePlan(real, [6, 8, 10, 12]);
+    assert.deepEqual(r.map(x => x.p), [6, 8, 10, 12]);
+    assert.equal(r[0].prompt, 'arches off the sofa!');
+    assert.equal(r[2].prompt, 'normal one');
+    assert.ok(r[3].prompt.includes('says "stay" and "raw" quotes!'), r[3].prompt);
+});
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }
 console.log(`PASS (${passed} cases)`);
 

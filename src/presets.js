@@ -129,7 +129,32 @@ export function extractJsonArray(text) {
     if (start < 0 || end <= start) return null;
     const tryParse = str => { try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch { return null; } };
     const slice = s.slice(start, end + 1);
-    return tryParse(slice) ?? tryParse(repairQuotes(slice));
+    return tryParse(slice) ?? tryParse(repairQuotes(slice)) ?? looseObjects(slice);
+}
+
+/**
+ * Last resort for replies whose strings are closed with an ESCAPED quote (backslash + quote before the brace)
+ * or that mix raw quotes: split on object boundaries and read every "key": number plus the "prompt" text up to
+ * the LAST quote of the chunk, so inner / escaped quotes cannot break it.
+ * @returns {object[]|null}
+ */
+function looseObjects(str) {
+    const out = [];
+    for (let raw of str.split(/\}\s*,\s*\{/)) {
+        raw = raw.replace(/^[\s[{]+/, '').replace(/[\s\]}]+$/, '');
+        const obj = {};
+        for (const m of raw.matchAll(/"([A-Za-z_]\w*)"\s*:\s*(-?\d+(?:\.\d+)?)/g)) obj[m[1]] = Number(m[2]);
+        const t = raw.match(/"(prompt|text|scene)"\s*:\s*"([\s\S]*)$/);
+        if (t) {
+            let v = t[2];
+            const q = v.lastIndexOf('"');
+            if (q >= 0) v = v.slice(0, q);
+            if (v.endsWith('\\')) v = v.slice(0, -1);
+            obj[t[1]] = v.replace(/\\"/g, '"').replace(/\\n/g, ' ').trim();
+        }
+        if (Object.keys(obj).length) out.push(obj);
+    }
+    return out.length ? out : null;
 }
 
 /** Escape double quotes that sit inside string values: a quote closes a string only when the next non-space char is , : ] or }. */
