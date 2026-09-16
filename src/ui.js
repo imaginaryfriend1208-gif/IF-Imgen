@@ -119,6 +119,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     };
     bind('ifimgen_sd_use_wf', () => c.sd.useWorkflow, v => { c.sd.useWorkflow = v; showWf(); loadParams(); });
     bind('ifimgen_sd_inject', () => c.sd.injectLoras, v => c.sd.injectLoras = v);
+    bind('ifimgen_sd_wf_target', () => c.sd.workflowTarget || 'proxy', v => c.sd.workflowTarget = v);
     bind('ifimgen_sd_wf', () => c.sd.workflow, v => { c.sd.workflow = v; showWfInfo(); }, 'input');
     const setWorkflow = text => { c.sd.workflow = text; wfTa.value = text; save(); showWfInfo(); };
     $('ifimgen_wf_load').addEventListener('change', async e => {
@@ -635,6 +636,8 @@ function settingsPanel() {
                 <div class="ifimgen-note">${t('note_sd')}</div>
                 <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_sd_use_wf" type="checkbox"> ${t('lbl_use_workflow')}</label></div>
                 <div id="ifimgen_sd_wf_box" style="display:none">
+                    <div class="ifimgen-row"><label for="ifimgen_sd_wf_target">${t('lbl_wf_target')}</label>
+                        <select id="ifimgen_sd_wf_target" class="text_pole"><option value="proxy">${t('opt_wf_proxy')}</option><option value="comfy">${t('opt_wf_comfy')}</option></select></div>
                     <div class="ifimgen-row"><label>${t('lbl_workflow')}</label>
                         ${fileBtn({ inputId: 'ifimgen_wf_load', title: t('btn_wf_load') })}
                         ${btn({ id: 'ifimgen_wf_paste', icon: 'clipboard', title: t('btn_wf_paste') })}

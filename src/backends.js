@@ -2,7 +2,9 @@
 //  sd : ONE endpoint, two request styles, both routed through SillyTavern's own /api/sd/* proxy (no CORS work):
 //       - A1111 style (default): txt2img JSON -> proxy / Forge / WebUI.
 //       - Workflow style (sd.useWorkflow + sd.workflow): the user's own ComfyUI API-format workflow with
-//         %placeholders% is sent to ComfyUI via /api/sd/comfy/generate (queues /prompt, polls /history, fetches the image).
+//         %placeholders% is rendered here and sent on the SAME A1111 txt2img request as `ifimgen_workflow`
+//         (so URL + auth + the proxy's queue keep working). The comfy-cloud proxy runs it as-is on Comfy Cloud;
+//         a plain ComfyUI URL is handled by /api/sd/comfy/* instead (sd.workflowTarget = 'comfy').
 //  nai: NovelAI, browser-direct (image.novelai.net answers CORS *).
 import { renderWorkflow, extractLoras, injectLoras } from './comfy.js';
 
@@ -19,6 +21,8 @@ export function createSdBackend({ getRequestHeaders, settings }) {
     const body = extra => JSON.stringify({ url: cfg().url, auth: cfg().auth, ...extra });
     /** Workflow mode = the user pasted an API-format workflow and switched it on. */
     const workflowMode = () => cfg().useWorkflow === true && String(cfg().workflow ?? '').trim().length > 0;
+    /** 'proxy' (default): A1111-compatible proxy that accepts ifimgen_workflow. 'comfy': a real ComfyUI (/prompt, /history). */
+    const directComfy = () => workflowMode() && cfg().workflowTarget === 'comfy';
 
     async function post(path, extra = {}, signal) {
         const r = await fetch(path, { method: 'POST', headers: { ...getRequestHeaders() }, body: body(extra), signal });
@@ -29,8 +33,8 @@ export function createSdBackend({ getRequestHeaders, settings }) {
         return r;
     }
 
-    /** ComfyUI: render the stored workflow, inject <lora:...> tags as LoraLoaderModelOnly nodes, queue it. */
-    async function generateWorkflow({ prompt, negative, params, seed }, signal) {
+    /** Render the stored workflow with this prompt/params, inject <lora:...> tags as LoraLoaderModelOnly nodes. */
+    function buildWorkflow({ prompt, negative, params, seed }) {
         const { text, loras } = extractLoras(prompt);
         const nodes = renderWorkflow(cfg().workflow, {
             prompt: text, negative_prompt: negative, model: params.model,
@@ -38,6 +42,11 @@ export function createSdBackend({ getRequestHeaders, settings }) {
             steps: params.steps, cfg: params.cfg, width: params.width, height: params.height, seed,
         });
         if (cfg().injectLoras !== false) injectLoras(nodes, loras);
+        return nodes;
+    }
+
+    /** Real ComfyUI: queue the workflow through ST's /api/sd/comfy proxy (/prompt -> /history -> /view). */
+    async function generateDirectComfy(nodes, signal) {
         const r = await post('/api/sd/comfy/generate', { prompt: JSON.stringify({ prompt: nodes }) }, signal);
         const data = await r.json();
         if (!data?.data) throw new Error('ComfyUI returned no image.');
@@ -47,19 +56,22 @@ export function createSdBackend({ getRequestHeaders, settings }) {
     return {
         id: 'sd',
         workflowMode,
-        async test() { await post(workflowMode() ? '/api/sd/comfy/ping' : '/api/sd/ping'); return workflowMode() ? 'Connected (ComfyUI workflow mode).' : 'Connected.'; },
+        async test() { await post(directComfy() ? '/api/sd/comfy/ping' : '/api/sd/ping'); return workflowMode() ? `Connected (workflow mode, ${directComfy() ? 'ComfyUI' : 'A1111 proxy'}).` : 'Connected.'; },
         async fetchModels() {
-            const r = await post(workflowMode() ? '/api/sd/comfy/models' : '/api/sd/models');
+            const r = await post(directComfy() ? '/api/sd/comfy/models' : '/api/sd/models');
             const list = await r.json();
             return list.map(m => m.value ?? m.title ?? String(m));
         },
-        /** Sampler / scheduler names known to the endpoint (ComfyUI only; A1111 returns []). */
-        async fetchSamplers() { return workflowMode() ? (await post('/api/sd/comfy/samplers')).json() : []; },
-        async fetchSchedulers() { return workflowMode() ? (await post('/api/sd/comfy/schedulers')).json() : []; },
+        /** Sampler / scheduler names known to the endpoint (A1111 /samplers + /schedulers, or ComfyUI object_info). */
+        async fetchSamplers() { try { return await (await post(directComfy() ? '/api/sd/comfy/samplers' : '/api/sd/samplers')).json(); } catch { return []; } },
+        async fetchSchedulers() { try { return await (await post(directComfy() ? '/api/sd/comfy/schedulers' : '/api/sd/schedulers')).json(); } catch { return []; } },
         /** @returns {Promise<string>} base64 png */
         async generate({ prompt, negative, params, seed = -1 }, signal) {
-            if (workflowMode()) return generateWorkflow({ prompt, negative, params, seed }, signal);
+            const workflow = workflowMode() ? buildWorkflow({ prompt, negative, params, seed }) : null;
+            if (workflow && directComfy()) return generateDirectComfy(workflow, signal);
             const r = await post('/api/sd/generate', {
+                // Workflow mode via an A1111-compatible proxy: the rendered graph rides along; the proxy runs it as-is.
+                ifimgen_workflow: workflow ?? undefined,
                 ifimgen_raw: cfg().sdRaw !== false, // proxy: skip character supplements for this request
                 prompt, negative_prompt: negative,
                 sampler_name: params.sampler, scheduler: params.scheduler,

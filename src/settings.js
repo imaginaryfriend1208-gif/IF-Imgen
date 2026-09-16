@@ -23,7 +23,8 @@ export function defaultSettings() {
             // the API-format ComfyUI workflow (with %placeholders%, see src/comfy.js) is sent to ComfyUI at that URL.
             // injectLoras: <lora:name:w> tags from entities/styles become LoraLoaderModelOnly nodes in front of the sampler.
             // samplers / schedulers: names fetched from ComfyUI (suggestions for the profile fields).
-            sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [], useWorkflow: false, workflow: '', injectLoras: true, samplers: [], schedulers: [] },
+            // workflowTarget: 'proxy' = A1111-compatible proxy that accepts `ifimgen_workflow` on txt2img (comfy-cloud-proxy) | 'comfy' = real ComfyUI (/prompt).
+            sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [], useWorkflow: false, workflowTarget: 'proxy', workflow: '', injectLoras: true, samplers: [], schedulers: [] },
             // Optional HTTP header sent with every SD/Comfy request. Fill it in
             // Settings (Image API box) when your proxy supports it, e.g. name
             // X-IF-Imgen / value raw-prompt -> the proxy skips character
