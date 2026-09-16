@@ -224,7 +224,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             });
             const reply = await llm.chat({ system, user, signal: controller.signal });
             const plan = parsePlan(reply, paragraphs.map(p => p.index)).slice(0, count);
-            if (!plan.length) throw new Error('Planner returned no usable JSON plan.');
+            if (!plan.length) {
+                const head = reply.replace(/\s+/g, ' ').trim().slice(0, 220);
+                const refused = /(can(?:'|no)t|unable to|not able to|won't|will not|decline|refus|cannot assist|outside what I can)/i.test(reply) && !reply.includes('[');
+                throw new Error(refused
+                    ? `The planner LLM refused this reply (${head}…). Use a less strict model / connection profile for IF Imgen, or a SFW planner preset.`
+                    : `Planner returned no usable JSON plan. Reply started with: ${head || '(empty)'}`);
+            }
             log('plan', plan);
 
             // Refine mode: ONE scene-setting call + ONE batch refine call for ALL images of this reply.

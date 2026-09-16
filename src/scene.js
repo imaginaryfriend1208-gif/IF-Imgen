@@ -13,6 +13,7 @@
 //   3. refine  -> ONE batch call: setting + cast + the N drafts -> N final prompts (JSON array)
 // The batch call (never one call per image) keeps location / people / clothing identical across images.
 import { keysOf, normalizeKeyword } from './entities.js';
+import { extractJsonArray } from './presets.js';
 
 export const FACET_KEYS = ['outfit', 'front', 'back', 'body', 'face', 'nsfw', 'sfw', 'note'];
 
@@ -145,7 +146,7 @@ Rules:
 - Include only what would be visible in that shot; if a person is seen from behind, do not describe the face.
 - Do not repeat the same fact twice inside one prompt. No preamble, no explanation, no markdown fence.
 - {{dialect_rule}}
-OUTPUT FORMAT (strict): reply with ONLY a JSON array of exactly {{count}} objects, in draft order:
+OUTPUT FORMAT (strict): reply with ONLY a JSON array of exactly {{count}} objects, in draft order. Never use double quotes inside a prompt string:
 [{"i": 1, "prompt": "<final prompt for shot 1>"}, {"i": 2, "prompt": "<final prompt for shot 2>"}]`;
 
 export const REFINE_DIALECT_RULES = {
@@ -200,8 +201,7 @@ export function parseRefined(text, count) {
     const s = String(text ?? '').trim();
     const n = Math.max(1, Number(count) || 1);
     let arr = null;
-    const start = s.indexOf('['), end = s.lastIndexOf(']');
-    if (start >= 0 && end > start) { try { const j = JSON.parse(s.slice(start, end + 1)); if (Array.isArray(j)) arr = j; } catch { /* fall through */ } }
+    arr = extractJsonArray(s);
     if (!arr) {
         const os = s.indexOf('{'), oe = s.lastIndexOf('}');
         if (os >= 0 && oe > os) { try { const j = JSON.parse(s.slice(os, oe + 1)); if (Array.isArray(j?.prompts)) arr = j.prompts; else if (typeof j?.prompt === 'string') arr = [j]; } catch { /* fall through */ } }

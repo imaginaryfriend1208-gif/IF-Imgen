@@ -9,7 +9,7 @@ CAST: the ROSTER lists known people as $keyword with a short description so you 
 
 DETAILS: a roster entry may list detail tokens such as $yenka.back, $yenka.outfit, $yenka.nsfw, $yenka.body. Each holds a stored description you cannot see. When that part of the person is visible or matters for the shot, put the TOKEN in the prompt exactly as listed (e.g. "...walking away in the rain, wet $yenka.outfit clinging to her skin, showing $yenka.back"). Never guess or write the content of a detail yourself; never reference a token that is not listed.
 
-OUTPUT FORMAT (strict): reply with ONLY a JSON array, no prose, no markdown fence:
+OUTPUT FORMAT (strict): reply with ONLY a JSON array, no prose, no markdown fence. Inside "prompt" never use double quotes (write dialogue as: mouthing the words no no):
 [{"p": <paragraph number>, "prompt": "<image prompt>"}]
 - "p" must be one of the paragraph numbers listed. Pick the most visual moments.
 - Produce exactly {{count}} objects unless fewer paragraphs are usable.
@@ -115,14 +115,40 @@ export function renderPlannerPrompt(preset, a) {
     return { system, user };
 }
 
-/** Parse planner reply into [{p, prompt}] restricted to valid paragraph numbers. */
-export function parsePlan(text, validIndexes) {
+/**
+ * Pull the first JSON array out of an LLM reply. Tolerates prose around it, a ```json fence,
+ * and unescaped double quotes INSIDE string values (e.g. a "no, no" plea).
+ * Strict parse of [first '[' .. last ']'] first; if that fails, quotes that are not followed by a
+ * JSON structural character are re-escaped and parsing is retried.
+ * @returns {any[]|null}
+ */
+export function extractJsonArray(text) {
     const s = String(text ?? '');
     const start = s.indexOf('[');
     const end = s.lastIndexOf(']');
-    if (start < 0 || end <= start) return [];
-    let arr;
-    try { arr = JSON.parse(s.slice(start, end + 1)); } catch { return []; }
+    if (start < 0 || end <= start) return null;
+    const tryParse = str => { try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch { return null; } };
+    const slice = s.slice(start, end + 1);
+    return tryParse(slice) ?? tryParse(repairQuotes(slice));
+}
+
+/** Escape double quotes that sit inside string values: a quote closes a string only when the next non-space char is , : ] or }. */
+function repairQuotes(str) {
+    let out = '', inStr = false;
+    for (let i = 0; i < str.length; i++) {
+        const ch = str[i];
+        if (!inStr) { if (ch === '"') inStr = true; out += ch; continue; }
+        if (ch === '\\') { out += ch + (str[i + 1] ?? ''); i++; continue; }
+        if (ch !== '"') { out += ch; continue; }
+        if (/^\s*[,:\]}]/.test(str.slice(i + 1))) { inStr = false; out += ch; } else out += '\\"';
+    }
+    return out;
+}
+
+/** Parse planner reply into [{p, prompt}] restricted to valid paragraph numbers. */
+export function parsePlan(text, validIndexes) {
+    const s = String(text ?? '');
+    const arr = extractJsonArray(s);
     if (!Array.isArray(arr)) return [];
     const valid = new Set(validIndexes);
     const seen = new Set();
