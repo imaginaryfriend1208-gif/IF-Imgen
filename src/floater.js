@@ -11,17 +11,20 @@
 // whatever fails in here must never take the rest of the extension down.
 import { ICONS } from './icons.js';
 import { t } from './i18n.js';
+import { escapeHtml } from './util.js';
+import { createEntity, upsertEntity, removeEntity, LORA_POSITIONS } from './entities.js';
 
 const BTN = 52; // button diameter (px) - keep in sync with .ifimgen-fl-btn
 
 /**
  * @param {{ settings:object, save:Function, pipeline:object, getContext:Function,
- *           openSettings:Function, openGallery:Function, onCollapseToggle:Function }} deps
+ *           openSettings:Function, openGallery:Function, onCollapseToggle:Function, onStylesChange?:Function }} deps
  */
-export function mountFloater({ settings, save, pipeline, getContext, openSettings, openGallery, onCollapseToggle }) {
+export function mountFloater({ settings, save, pipeline, getContext, openSettings, openGallery, onCollapseToggle, onStylesChange }) {
     const g = settings.generate;
     let root = null, pop = null, pill = null, stopJobs = null;
     let lastState = { running: 0, ids: [], status: '' };
+    let editing = null; // null = action list; { id: string|null } = style editor (null id = new style)
 
     const lastCharMessage = () => {
         const ctx = getContext();
@@ -50,17 +53,100 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         catch (e) { toast('error', e.message); }
     }
 
+    // ------------------------------------------------------------------ styles (settings.data.styles + settings.defaultStyleId)
+    const styles = () => settings.data?.styles ?? [];
+    const stylesChanged = () => { save(); try { onStylesChange?.(); } catch { /* drawer may be re-mounting */ } };
+    function styleRow() {
+        const list = styles();
+        const opts = list.length
+            ? list.map(s => `<option value="${escapeHtml(s.id)}"${s.id === settings.defaultStyleId ? ' selected' : ''}>${escapeHtml(s.name || '(unnamed)')}</option>`).join('')
+            : `<option value="">${t('fl_style_none')}</option>`;
+        return `
+            <div class="ifimgen-fl-style">
+                <span class="ifimgen-fl-style-lbl">${ICONS.palette}${t('fl_style')}</span>
+                <select class="ifimgen-fl-style-sel text_pole" data-style-select>${opts}</select>
+                <button type="button" class="ifimgen-fl-mini" data-act="style-edit" title="${t('fl_style_edit_title')}"${list.length ? '' : ' disabled'}>${ICONS.settings}<span>${t('fl_style_edit')}</span></button>
+                <button type="button" class="ifimgen-fl-mini" data-act="style-new" title="${t('fl_style_new')}">${ICONS.plus}</button>
+            </div>`;
+    }
+    const field = (cls, label, control) => `<label class="ifimgen-fl-field"><span>${label}</span>${control}</label>`;
+    function renderEditor() {
+        const cur = editing.id ? styles().find(s => s.id === editing.id) : null;
+        const e = cur ?? createEntity('styles');
+        const isDef = Boolean(cur) && cur.id === settings.defaultStyleId;
+        root.classList.add('editing');
+        pop.innerHTML = `
+            <div class="ifimgen-fl-status ifimgen-fl-edit-head">
+                <button type="button" class="ifimgen-fl-mini" data-act="style-back" title="${t('fl_style_back')}">${ICONS.x}</button>
+                <b>${cur ? t('fl_style_head_edit') : t('fl_style_head_new')}</b>
+            </div>
+            <div class="ifimgen-fl-form">
+                ${field('name', t('lbl_name'), `<input class="text_pole" data-f="name" type="text" value="${escapeHtml(e.name)}" placeholder="${escapeHtml(t('ph_style_name'))}">`)}
+                ${field('tags', t('lbl_tags'), `<textarea class="text_pole" data-f="tags" rows="2" placeholder="anime style, flat color, clean lineart">${escapeHtml(e.tags)}</textarea>`)}
+                ${field('natural', t('lbl_natural'), `<textarea class="text_pole" data-f="natural" rows="2">${escapeHtml(e.natural)}</textarea>`)}
+                ${field('negative', t('lbl_negative'), `<input class="text_pole" data-f="negative" type="text" value="${escapeHtml(e.negative)}" placeholder="realistic, 3d, photo">`)}
+                ${field('loras', t('lbl_loras'), `<textarea class="text_pole" data-f="loras" rows="2" placeholder="${escapeHtml(t('ph_loras'))}">${escapeHtml(e.loras.join('\n'))}</textarea>`)}
+                ${field('lorapos', t('lbl_lorapos'), `<select class="text_pole" data-f="loraPosition">${LORA_POSITIONS.map(p => `<option value="${p}"${p === e.loraPosition ? ' selected' : ''}>${p}</option>`).join('')}</select>`)}
+            </div>
+            <div class="ifimgen-fl-status ifimgen-fl-edit-status" data-edit-status></div>
+            <div class="ifimgen-fl-row">
+                <button type="button" class="ifimgen-fl-act primary" data-act="style-save">${ICONS.save}<span><b>${t('btn_save')}</b></span></button>
+                <button type="button" class="ifimgen-fl-act${isDef ? ' active' : ''}" data-act="style-default"${cur ? '' : ' disabled'}>${ICONS.star}<span><b>${isDef ? t('btn_default_on') : t('btn_set_default')}</b></span></button>
+                <button type="button" class="ifimgen-fl-act danger" data-act="style-delete"${cur ? '' : ' disabled'} title="${t('btn_delete')}">${ICONS.trash}<span><b>${t('btn_delete')}</b></span></button>
+            </div>`;
+        setTimeout(() => pop.querySelector('[data-f="name"]')?.focus(), 0);
+    }
+    const editStatus = (text, cls = '') => { const n = pop?.querySelector('[data-edit-status]'); if (n) { n.textContent = text; n.className = `ifimgen-fl-status ifimgen-fl-edit-status ${cls}`; } };
+    const readEditor = () => {
+        const v = f => pop.querySelector(`[data-f="${f}"]`)?.value ?? '';
+        const base = editing.id ? styles().find(s => s.id === editing.id) : null;
+        return createEntity('styles', { id: base?.id, name: v('name'), keyword: base?.keyword || v('name'), tags: v('tags'), natural: v('natural'), negative: v('negative'), loras: v('loras'), loraPosition: v('loraPosition') });
+    };
+    function styleSave() {
+        const e = readEditor();
+        if (!e.name.trim()) return editStatus(t('fl_style_name_req'), 'error');
+        upsertEntity(styles(), e);
+        if (!styles().some(x => x.id === settings.defaultStyleId)) settings.defaultStyleId = e.id;
+        editing = { id: e.id };
+        stylesChanged();
+        renderEditor();
+        editStatus(t('fl_style_saved', { name: e.name }), 'ok');
+    }
+    function styleDelete() {
+        if (!editing.id) return;
+        removeEntity(styles(), editing.id);
+        if (settings.defaultStyleId === editing.id) settings.defaultStyleId = styles()[0]?.id ?? '';
+        stylesChanged();
+        editing = null;
+        renderPop();
+    }
+    function styleDefault() {
+        if (!editing.id) return;
+        settings.defaultStyleId = editing.id;
+        stylesChanged();
+        renderEditor();
+        editStatus(t('fl_style_now_default', { name: styles().find(s => s.id === editing.id)?.name ?? '' }), 'ok');
+    }
+    function onStyleSelect(e) {
+        const sel = e.target.closest('[data-style-select]'); if (!sel || !sel.value) return;
+        settings.defaultStyleId = sel.value;
+        stylesChanged();
+    }
+
     // ------------------------------------------------------------------ popup
     const item = (act, icon, label, sub = '', cls = '') =>
         `<button type="button" class="ifimgen-fl-act ${cls}" data-act="${act}">${ICONS[icon] ?? ''}<span><b>${label}</b>${sub ? `<small>${sub}</small>` : ''}</span></button>`;
     function renderPop() {
         if (!pop) return;
+        if (editing) return renderEditor();
+        root.classList.remove('editing');
         const busy = lastState.running > 0;
         pop.innerHTML = `
             <div class="ifimgen-fl-status">${busy ? statusText(lastState) : t('fl_title')}</div>
             ${item('regen', 'refresh', t('fl_regen'), t('fl_regen_sub'), 'primary')}
             ${item('gen', 'sparkles', t('fl_generate'), t('fl_generate_sub'))}
             ${busy ? item('cancel', 'x', t('fl_cancel', { n: lastState.running }), '', 'danger') : ''}
+            ${styleRow()}
             <div class="ifimgen-fl-row">
                 ${item('gallery', 'images', t('fl_gallery'))}
                 ${item('collapse', 'image', g.collapseImages ? t('fl_unfold') : t('fl_fold'))}
@@ -70,6 +156,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
     }
     function openPop() {
         if (!root || !pop) return;
+        editing = null;
         renderPop();
         // keep the popup inside the viewport: open downwards near the top edge, leftwards near the left edge
         const r = root.getBoundingClientRect();
@@ -78,10 +165,10 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         root.classList.add('open');
         setTimeout(() => document.addEventListener('pointerdown', outside, { capture: true }), 0);
     }
-    function closePop() { root?.classList.remove('open'); document.removeEventListener('pointerdown', outside, { capture: true }); }
+    function closePop() { root?.classList.remove('open', 'editing'); editing = null; document.removeEventListener('pointerdown', outside, { capture: true }); }
     const outside = e => { if (root && !root.contains(e.target)) closePop(); };
     function onAction(e) {
-        const b = e.target.closest('[data-act]'); if (!b) return;
+        const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
         e.preventDefault(); e.stopPropagation();
         const act = b.dataset.act;
         if (act === 'regen') regenLast();
@@ -90,6 +177,12 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         else if (act === 'gallery') { closePop(); openGallery?.(); }
         else if (act === 'settings') { closePop(); openSettings?.(); }
         else if (act === 'collapse') { onCollapseToggle?.(); renderPop(); }
+        else if (act === 'style-edit') { const id = pop.querySelector('[data-style-select]')?.value || settings.defaultStyleId; if (id && styles().some(s => s.id === id)) { editing = { id }; renderEditor(); } }
+        else if (act === 'style-new') { editing = { id: null }; renderEditor(); }
+        else if (act === 'style-back') { editing = null; renderPop(); }
+        else if (act === 'style-save') styleSave();
+        else if (act === 'style-delete') styleDelete();
+        else if (act === 'style-default') styleDefault();
     }
 
     // ------------------------------------------------------------------ drag (pointer events; no move = click)
@@ -176,6 +269,9 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         document.body.appendChild(root);
         pop = root.querySelector('.ifimgen-fl-pop');
         pop.addEventListener('click', onAction);
+        pop.addEventListener('change', onStyleSelect);
+        // typing / clicking inside the popup must not start a drag on the button or close via the outside handler
+        pop.addEventListener('pointerdown', e => e.stopPropagation());
         enableDrag(root.querySelector('.ifimgen-fl-btn'));
         if (g.floaterPos && Number.isFinite(g.floaterPos.x) && Number.isFinite(g.floaterPos.y)) place(g.floaterPos.x, g.floaterPos.y);
         window.addEventListener('resize', onResize);

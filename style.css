@@ -260,6 +260,28 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-fl-row .ifimgen-fl-act { flex: 1 1 0; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 4px; text-align: center; }
 .ifimgen-fl-row .ifimgen-fl-act b { font-size: 11px; font-weight: 500; }
 .ifimgen-fl-hint { font-size: 10px; opacity: .5; text-align: center; }
+/* style row: pick the default style, edit it in place, or add a new one */
+.ifimgen-fl-style { display: flex; align-items: center; gap: 6px; padding: 6px 0 2px; border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .2)); }
+.ifimgen-fl-style-lbl { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; opacity: .8; flex: 0 0 auto; }
+.ifimgen-fl-style-lbl .ifimgen-ico { width: 14px; height: 14px; }
+.ifimgen-fl-pop .ifimgen-fl-style-sel { flex: 1 1 0; min-width: 0; height: 28px; margin: 0; padding: 0 6px; font-size: 12px; }
+.ifimgen-fl-mini { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 28px; min-width: 28px; padding: 0 6px; border-radius: 6px; cursor: pointer; font-size: 11px; border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .2)); background: transparent; color: inherit; }
+.ifimgen-fl-mini:hover:not(:disabled) { background: rgba(255, 255, 255, .07); border-color: var(--SmartThemeQuoteColor, #7aa2f7); }
+.ifimgen-fl-mini:disabled { opacity: .4; cursor: default; }
+.ifimgen-fl-mini .ifimgen-ico { width: 14px; height: 14px; }
+/* in-popup style editor */
+.ifimgen-fl.editing .ifimgen-fl-pop { width: 320px; }
+.ifimgen-fl-edit-head { display: flex; align-items: center; gap: 8px; opacity: 1; }
+.ifimgen-fl-form { display: flex; flex-direction: column; gap: 6px; max-height: min(52vh, 420px); overflow-y: auto; padding-right: 2px; }
+.ifimgen-fl-field { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.ifimgen-fl-field > span { font-size: 11px; opacity: .75; }
+.ifimgen-fl-pop .ifimgen-fl-field .text_pole { width: 100%; margin: 0; font-size: 12px; box-sizing: border-box; }
+.ifimgen-fl-pop .ifimgen-fl-field textarea.text_pole { min-height: 44px; resize: vertical; }
+.ifimgen-fl-edit-status { border: 0; padding: 0 2px; min-height: 1.2em; }
+.ifimgen-fl-edit-status.ok { color: var(--okGreen, #9ece6a); }
+.ifimgen-fl-edit-status.error { color: var(--warning, #f7768e); }
+.ifimgen-fl-act.active { border-color: var(--SmartThemeQuoteColor, #7aa2f7); }
+.ifimgen-fl-act:disabled { opacity: .4; cursor: default; }
 
 /* ---- "generating…" strip above the text of the reply being illustrated + sticky pill above the send form ---- */
 .ifimgen-genbar { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 5px 10px; border-radius: 8px; font-size: 12px; color: var(--SmartThemeBodyColor, #e6e6e6); background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7aa2f7) 18%, transparent); border: 1px solid var(--SmartThemeQuoteColor, #7aa2f7); }

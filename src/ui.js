@@ -54,6 +54,7 @@ export function mountDrawer(deps) {
         refresh: () => api.refresh(),
         refreshGallery: () => api.refreshGallery(),
         showTab: tab => api.showTab(tab),
+        refreshEntities: () => api.refreshEntities(),
         remount(tab) { api = mountOnce(deps, tab); },
     };
 }
@@ -454,7 +455,9 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     new MutationObserver((_, obs) => { if (!root.contains(jobsEl)) { stopJobs?.(); obs.disconnect(); } }).observe(root, { childList: true });
 
     // ============================================================ Entities
-    for (const tab of ENTITY_TABS()) mountEntityTab(tab);
+    const entityTabs = ENTITY_TABS().map(tab => mountEntityTab(tab));
+    // Lists edited elsewhere (floater style editor): re-read settings.data into every entity tab.
+    const refreshEntities = () => entityTabs.forEach(api => api.reload());
 
     function mountEntityTab({ kind, tab }) {
         const panel = root.querySelector(`[data-panel="${tab}"]`);
@@ -570,13 +573,19 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         if (isStyle) q('.ent-default').addEventListener('click', () => { if (!currentId) return setStatus('Save the style first.', 'error'); settings.defaultStyleId = currentId; save(); refreshList(); setStatus('This style is now the default for every image.', 'ok'); });
         const setStatus = (text, cls) => { const n = q('.ent-status'); n.textContent = text; n.className = `ifimgen-status ${cls}`; };
         load(list().find(x => x.id === currentId)); refreshList();
+        return {
+            reload() {
+                if (!list().some(x => x.id === currentId)) currentId = list()[0]?.id ?? null;
+                load(list().find(x => x.id === currentId)); refreshList();
+            },
+        };
     }
 
     // ============================================================ Gallery
     const gallery = mountGallery({ panel: root.querySelector('[data-panel="gallery"]'), getContext, viewer, pipeline });
 
     showTab(openTab);
-    return { refresh() { fillModels(); fillPresets(); gallery.refresh(); }, refreshGallery: () => gallery.refresh(), showTab };
+    return { refresh() { fillModels(); fillPresets(); gallery.refresh(); }, refreshGallery: () => gallery.refresh(), refreshEntities, showTab };
 }
 
 function fillSelect(sel, items, value, emptyLabel = null) {

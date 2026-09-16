@@ -173,6 +173,7 @@ async function mountFloaterSafe() {
             settings, save, pipeline, getContext,
             openSettings: () => openSettingsPanel('generate'),
             openGallery: () => openSettingsPanel('gallery'),
+            onStylesChange: () => drawer?.refreshEntities(), // style saved / deleted / set default from the floater -> Styles tab re-reads the list
             onCollapseToggle: () => {
                 settings.generate.collapseImages = !settings.generate.collapseImages; save();
                 document.body.classList.toggle('ifimgen-collapse', settings.generate.collapseImages);
