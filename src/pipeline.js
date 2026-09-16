@@ -1,7 +1,7 @@
 // IF Imgen - per-message pipeline: paragraphs -> planner LLM -> N images -> insert in place.
 // Each image is also recorded in message.extra.ifimgen so it can be regenerated later.
 // Refine mode per reply: planner (1 call) -> scene setting (1 call) -> ONE batch refine for ALL images (1 call).
-import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
+import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
 import { resolveEntities, rosterText } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
@@ -48,7 +48,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         for (let i = messageId - 1; i >= 0 && out.length < k; i--) {
             const m = ctx.chat[i];
             if (!m || m.is_system) continue;
-            out.unshift(`${m.is_user ? 'User' : m.name}: ${stripImages(m.mes).slice(0, 800)}`);
+            out.unshift(`${m.is_user ? 'User' : m.name}: ${stripImagesLoose(m.mes).slice(0, 800)}`);
         }
         return out.join('\n\n');
     }
@@ -200,6 +200,17 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const msg = ctx.chat[messageId];
         if (!msg || msg.is_user || msg.is_system) return { skipped: 'not a character message' };
         if (inflight.has(messageId)) return { skipped: 'already running' };
+
+        // Echoed markdown: the chat LLM sometimes copies an OLDER reply's `<!--ifimgen-->\n![IF Imgen](url)` into a
+        // new reply (the generate interceptor in index.js strips it from the prompt, but old chats / other
+        // front-ends can still leak it). An image this message never generated is not its image: drop it from the
+        // text first, otherwise the auto-run would see "already has images" and show a stale picture.
+        const cleaned = stripForeignImages(msg.mes, records(msg).map(r => r.url));
+        if (cleaned !== msg.mes) {
+            log(`#${messageId} removed image markdown echoed by the chat LLM`);
+            setMessageText(ctx, messageId, cleaned);
+            await ctx.saveChat();
+        }
         if (!opt.force && countImages(msg.mes) > 0) return { skipped: 'already has images' };
 
         // force on a message that already has images = full regenerate: plan again on the clean text.

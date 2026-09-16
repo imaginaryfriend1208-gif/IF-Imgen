@@ -122,7 +122,11 @@
 #chat .mes.ifimgen-flash { outline: 2px solid var(--SmartThemeQuoteColor, #7aa2f7); outline-offset: -2px; transition: outline-color 1.2s; }
 
 /* ---- chat */
-.ifimgen_msg_btn.fa-hourglass { opacity: .7; }
+/* per-message button (in .mes_buttons next to "..."): generate (neutral) / regenerate (accent) / cancel (red + spinning ring) */
+.ifimgen_msg_btn { position: relative; }
+.ifimgen_msg_btn.has-images { color: var(--SmartThemeQuoteColor, #7aa2f7); }
+.ifimgen_msg_btn.running { color: #f7768e; }
+.ifimgen_msg_btn.running::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid transparent; border-top-color: currentColor; animation: ifimgen-spin 1s linear infinite; pointer-events: none; }
 .mes_text img[alt="IF Imgen"] { max-width: 100%; border-radius: 6px; margin: 4px 0; display: block; }
 /* alignment (Generate -> Behaviour): the body class moves both the image and its fold button */
 body.ifimgen-align-center .mes_text img[alt="IF Imgen"] { margin-left: auto; margin-right: auto; }

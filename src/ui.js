@@ -61,7 +61,7 @@ export function mountDrawer(deps) {
     };
 }
 
-function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, discordUrl, kofiUrl, onLanguageChange, onCollapseChange, onAlignChange, onFloaterChange }, openTab) {
+function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, discordUrl, kofiUrl, onLanguageChange, onCollapseChange, onAlignChange, onFloaterChange, onShowButtonChange }, openTab) {
     root.innerHTML = markup({ discordUrl, kofiUrl });
     const $ = id => root.querySelector(`#${id}`);
     const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; n.className = `ifimgen-status ${cls}`; };
@@ -284,7 +284,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     const g = settings.generate;
     bind('ifimgen_enabled', () => settings.enabled, v => settings.enabled = v);
     bind('ifimgen_auto', () => g.auto, v => g.auto = v);
-    bind('ifimgen_show_button', () => g.showButton, v => g.showButton = v);
+    bind('ifimgen_show_button', () => g.showButton, v => { g.showButton = v; onShowButtonChange?.(v); });
     bind('ifimgen_collapse', () => g.collapseImages, v => { g.collapseImages = v; document.body.classList.toggle('ifimgen-collapse', v); onCollapseChange?.(v); });
     bind('ifimgen_floater', () => g.floater !== false, v => { g.floater = v; onFloaterChange?.(v); });
     document.body.classList.toggle('ifimgen-collapse', Boolean(g.collapseImages));

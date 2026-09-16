@@ -5,6 +5,7 @@
     "optional": ["connection-manager"],
     "js": "index.js",
     "css": "style.css",
+    "generate_interceptor": "ifimgenInterceptor",
     "author": "Diuen",
     "version": "0.10.0",
     "homePage": "",

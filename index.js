@@ -14,6 +14,7 @@ import { mountDrawer } from './src/ui.js';
 import { createViewer, collectChatImages } from './src/gallery.js';
 import { t, setLang } from './src/i18n.js';
 import { compareVersions } from './src/util.js';
+import { countImages, stripImagesLoose, IMG_MARK } from './src/paragraphs.js';
 
 const VERSION = '0.10.0';
 const REPO_URL = 'https://github.com/imaginaryfriend1208-gif/IF-Imgen';
@@ -37,7 +38,7 @@ async function saveImage(b64, charName) {
 
 let drawer = null;
 let floater = null; // mounted last, from a dynamic import guarded by try/catch - see mountFloaterSafe()
-const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, save, log: LOG, onChange: id => { drawer?.refreshGallery(); if (settings.generate.collapseImages && typeof id === 'number' && id >= 0) setTimeout(() => foldImages(id), 50); } });
+const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, save, log: LOG, onChange: id => { drawer?.refreshGallery(); paintAllMessageButtons(); if (settings.generate.collapseImages && typeof id === 'number' && id >= 0) setTimeout(() => foldImages(id), 50); } });
 const viewer = createViewer({ getContext, pipeline, onChanged: () => drawer?.refreshGallery() });
 
 // ---- collapse: each IF Imgen image in chat sits behind a small toggle button (Generate → Behaviour).
@@ -103,33 +104,69 @@ document.addEventListener('click', e => {
     viewer.open(items, i);
 }, true);
 
-// ---- per-message button
+// ---- prompt interceptor (manifest.generate_interceptor). SillyTavern calls this before every generation with a
+// shallow copy of the chat: replacing items (never mutating them) changes only the prompt, not the saved chat.
+// The chat LLM must not see our image markdown - models copy `<!--ifimgen-->\n![IF Imgen](url)` from the
+// history into their next reply, which showed an OLD picture there and made the auto-run skip the message.
+globalThis.ifimgenInterceptor = async function ifimgenInterceptor(chat) {
+    if (!Array.isArray(chat)) return;
+    for (let i = 0; i < chat.length; i++) {
+        const m = chat[i];
+        if (!m || typeof m.mes !== 'string' || !(m.mes.includes('![IF Imgen](') || m.mes.includes(IMG_MARK))) continue;
+        chat[i] = { ...m, mes: stripImagesLoose(m.mes) };
+    }
+};
+
+// ---- per-message button: lives in the message's own action bar right next to the "..." button (always visible,
+// not inside the collapsed extra-buttons menu). One button, three faces:
+//   no images -> generate | has images -> regenerate all | running -> cancel.   Shift+click removes the images.
+function paintMessageButton(btn, id) {
+    const m = getContext().chat[id];
+    const running = pipeline.isRunning(id);
+    const has = Boolean(m && countImages(m.mes) > 0);
+    btn.classList.remove('fa-images', 'fa-arrows-rotate', 'fa-stop', 'running', 'has-images');
+    btn.classList.add(running ? 'fa-stop' : has ? 'fa-arrows-rotate' : 'fa-images');
+    if (running) btn.classList.add('running'); else if (has) btn.classList.add('has-images');
+    btn.title = t(running ? 'msg_btn_cancel' : has ? 'msg_btn_regen' : 'msg_btn_gen');
+}
+function paintAllMessageButtons() {
+    document.querySelectorAll('#chat .ifimgen_msg_btn').forEach(b => {
+        const id = Number(b.closest('.mes')?.getAttribute('mesid'));
+        if (Number.isFinite(id)) paintMessageButton(b, id);
+    });
+}
 function addMessageButton(messageId) {
     if (!settings.generate.showButton) return;
     const mes = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
     if (!mes || mes.getAttribute('is_user') === 'true' || mes.getAttribute('is_system') === 'true') return;
-    const bar = mes.querySelector('.extraMesButtons');
-    if (!bar || bar.querySelector('.ifimgen_msg_btn')) return;
+    const existing = mes.querySelector('.ifimgen_msg_btn');
+    if (existing) return paintMessageButton(existing, messageId);
+    const bar = mes.querySelector('.mes_buttons');
+    const hint = bar?.querySelector('.extraMesButtonsHint');
+    const extra = mes.querySelector('.extraMesButtons');
+    if (!bar && !extra) return;
     const btn = document.createElement('div');
-    btn.className = 'mes_button ifimgen_msg_btn fa-solid fa-images';
-    btn.title = t('msg_btn_title');
+    btn.className = 'mes_button ifimgen_msg_btn fa-solid';
     btn.addEventListener('click', async e => {
+        e.preventDefault(); e.stopPropagation();
         const id = Number(btn.closest('.mes')?.getAttribute('mesid'));
-        if (e.shiftKey) return pipeline.clear(id);
+        if (e.shiftKey) { await pipeline.clear(id); return paintMessageButton(btn, id); }
         if (pipeline.isRunning(id)) return pipeline.cancel(id);
-        btn.classList.replace('fa-images', 'fa-hourglass');
         try {
             const r = await pipeline.run(id, { force: true });
             if (r?.skipped) toastr.info(r.skipped, 'IF Imgen');
         } catch (err) { toastr.error(err.message, 'IF Imgen'); }
-        finally { btn.classList.replace('fa-hourglass', 'fa-images'); }
+        finally { paintMessageButton(btn, id); }
     });
-    bar.prepend(btn);
+    if (hint) hint.before(btn); else if (bar) bar.prepend(btn); else extra.prepend(btn);
+    paintMessageButton(btn, messageId);
 }
-
 function addAllButtons() {
     document.querySelectorAll('#chat .mes[mesid]').forEach(m => addMessageButton(Number(m.getAttribute('mesid'))));
 }
+function removeAllButtons() { document.querySelectorAll('#chat .ifimgen_msg_btn').forEach(b => b.remove()); }
+// Faces follow the job state (auto-run, floater, slash command, viewer all go through the pipeline).
+pipeline.onJobs(() => paintAllMessageButtons());
 
 // ---- events
 eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, async (messageId) => {
@@ -148,9 +185,9 @@ eventSource.on(event_types.GENERATION_ENDED, async () => {
     } catch (e) { toastr.error(e.message, 'IF Imgen'); }
 });
 eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); foldAll(); drawer?.refreshGallery(); floater?.repaint(); }, 300); });
-eventSource.on(event_types.MESSAGE_DELETED, () => drawer?.refreshGallery());
-eventSource.on(event_types.MESSAGE_EDITED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
-eventSource.on(event_types.MESSAGE_SWIPED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
+eventSource.on(event_types.MESSAGE_DELETED, () => { drawer?.refreshGallery(); paintAllMessageButtons(); });
+eventSource.on(event_types.MESSAGE_EDITED, id => { drawer?.refreshGallery(); paintAllMessageButtons(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
+eventSource.on(event_types.MESSAGE_SWIPED, id => { drawer?.refreshGallery(); paintAllMessageButtons(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
 eventSource.on(event_types.MORE_MESSAGES_LOADED, () => { addAllButtons(); foldAll(); floater?.repaint(); });
 
 // ---- floating quick-action button (src/floater.js). Loaded AFTER the drawer through a dynamic import in
@@ -223,8 +260,9 @@ jQuery(async () => {
         e.preventDefault(); e.stopPropagation(); window.open(REPO_URL, '_blank', 'noopener');
     });
     const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, discordUrl: DISCORD_URL, kofiUrl: KOFI_URL };
-    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); document.querySelectorAll('.ifimgen_msg_btn').forEach(b => b.title = t('msg_btn_title')); floater?.refresh(); };
+    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); paintAllMessageButtons(); floater?.refresh(); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
+    drawerDeps.onShowButtonChange = on => { if (on) addAllButtons(); else removeAllButtons(); };
     drawerDeps.onAlignChange = v => applyAlign(v);
     drawerDeps.onFloaterChange = on => floater?.setEnabled(on);
     drawer = mountDrawer(drawerDeps);

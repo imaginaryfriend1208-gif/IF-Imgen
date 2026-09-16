@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 // IF Imgen - pure-module tests (no DOM, no ST). Run: node scripts/test-core.mjs
 import assert from 'node:assert/strict';
-import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
+import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
 import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset, extractJsonArray } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
 import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
@@ -32,6 +32,23 @@ test('insertAfterParagraphs places images after the right paragraph, multi-inser
     assert.ok(i2 > hall && i2 < out.indexOf('```'), 'image B after paragraph 2, before code');
     assert.equal(countImages(out), 2);
     assert.equal(stripImages(out), mes);
+});
+
+test('echoed image markdown: stripImagesLoose drops everything (prompt copy), stripForeignImages keeps only this message\'s own images', () => {
+    const NL = String.fromCharCode(10);
+    const own = imageSnippet('/user/images/A/own.png');
+    const echoed = '![IF Imgen](/user/images/A/old.png)';               // copied by the chat LLM without the marker
+    const echoed2 = IMG_MARK + NL + '![IF Imgen](/user/images/A/old2.png)'; // copied with the marker
+    const mes = ['p1', '', own, '', 'p2', '', echoed, '', 'p3', '', echoed2, '', IMG_MARK, 'p4'].join(NL);
+    assert.equal(stripImagesLoose(mes), ['p1', '', 'p2', '', 'p3', '', 'p4'].join(NL));
+    const cleaned = stripForeignImages(mes, ['/user/images/A/own.png']);
+    assert.ok(cleaned.includes('own.png') && !cleaned.includes('old.png') && !cleaned.includes('old2.png'), 'foreign images removed, own kept');
+    assert.equal(countImages(cleaned), 1, 'stray marker removed, own marker kept');
+    assert.equal(stripImages(cleaned), ['p1', '', 'p2', '', 'p3', '', 'p4'].join(NL));
+    assert.equal(stripForeignImages('plain reply', []), 'plain reply');
+    assert.equal(stripForeignImages(own, ['/user/images/A/own.png']), own, 'own-only message untouched');
+    // a brand-new reply where the LLM echoed one old picture: nothing is "known" -> text becomes clean -> auto-run proceeds
+    assert.equal(countImages(stripForeignImages('Hello.' + NL + NL + echoed2, [])), 0);
 });
 
 test('re-split after insertion ignores image blocks', () => {

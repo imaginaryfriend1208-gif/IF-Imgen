@@ -77,6 +77,30 @@ export function stripImages(mes) {
     return collapse(String(mes ?? '').replace(new RegExp(`\\n*${IMG_MARK}\\n${IMG_RE_SRC}`, 'g'), ''));
 }
 
+/**
+ * Loose strip: every IF Imgen image whether or not its marker is present, plus stray markers.
+ * Used for text handed to an LLM (chat prompt via the generate interceptor, planner context): models copy
+ * `<!--ifimgen-->\n![IF Imgen](url)` from the history into their next reply when they see it.
+ */
+export function stripImagesLoose(mes) {
+    return collapse(String(mes ?? '')
+        .replace(new RegExp(`\\n*(?:${IMG_MARK}\\s*)?${IMG_RE_SRC}`, 'g'), '')
+        .replace(new RegExp(`${IMG_MARK}[ \\t]*`, 'g'), ''));
+}
+
+/**
+ * Remove images whose URL is not in `known` (= this message never generated them: the chat LLM echoed an
+ * older reply's picture) and markers that no longer precede an image. Own images are left untouched.
+ * @param {Iterable<string>} known URLs recorded in message.extra.ifimgen
+ */
+export function stripForeignImages(mes, known) {
+    const keep = new Set([...known].map(u => safeImageUrl(u)));
+    const s = String(mes ?? '')
+        .replace(new RegExp(`\\n*(?:${IMG_MARK}\\s*)?(${IMG_RE_SRC})`, 'g'), (m, _whole, url) => keep.has(safeImageUrl(url)) ? m : '')
+        .replace(new RegExp(`${IMG_MARK}[ \\t]*(?!\\s*!\\[IF Imgen\\])`, 'g'), '');
+    return collapse(s);
+}
+
 /** Remove one image block by URL. */
 export function removeImageByUrl(mes, url) {
     return collapse(String(mes ?? '').replace(new RegExp(`\\n*${IMG_MARK}\\n!\\[IF Imgen\\]\\(\\s*${escapeRe(url)}\\s*(?:"[^"]*")?\\s*\\)`, 'g'), ''));
