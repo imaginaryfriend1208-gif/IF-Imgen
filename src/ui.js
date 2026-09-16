@@ -837,11 +837,15 @@ function langSwitch() {
 
 function markup({ discordUrl, kofiUrl }) {
     const tabs = MAIN_TABS();
-    // Name + version live in the drawer header (index.js). The inner title row holds Discord contact, Ko-fi support and the language switch.
-    const link = (cls, url, icon, label, title) => url ? `<a class="ifimgen-btn ${cls}" href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${ICONS[icon]}<span>${label}</span></a>` : '';
+    // Name + version live in the drawer header (index.js). The inner title row is one compact cluster on the right:
+    // two small round logo links (Discord contact, Ko-fi support) + the EN / VI chips, all the same height.
+    const link = (cls, url, icon, label, title) => url ? `<a class="ifimgen-link ${cls}" href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(`${label} — ${title}`)}" aria-label="${escapeHtml(label)}">${ICONS[icon]}</a>` : '';
     return `
     <div class="ifimgen">
-        <div class="ifimgen-title">${link('ifimgen-discord', discordUrl, 'discord', t('btn_discord'), t('btn_discord_title'))}${link('ifimgen-kofi', kofiUrl, 'kofi', t('btn_kofi'), t('btn_kofi_title'))}${langSwitch()}</div>
+        <div class="ifimgen-title">
+            <div class="ifimgen-links">${link('ifimgen-discord', discordUrl, 'discord', t('btn_discord'), t('btn_discord_title'))}${link('ifimgen-kofi', kofiUrl, 'kofi', t('btn_kofi'), t('btn_kofi_title'))}</div>
+            ${langSwitch()}
+        </div>
         <div class="ifimgen-tabs">
             ${tabs.map(tab => btn({ icon: tab.icon, label: tab.label, attrs: `data-tab="${tab.tab}"` })).join('')}
         </div>

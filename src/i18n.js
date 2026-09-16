@@ -30,8 +30,8 @@ const en = {
     tab_gallery: 'Gallery', tab_help: 'How to use', tab_generate: 'Generate',
     lang_title: 'Language',
     hdr_update: 'Update', hdr_update_title: 'A newer IF Image (v{v}) is on GitHub. Click to open. Update via Extensions → Manage extensions → Update.',
-    btn_discord: 'Contact · Discord', btn_discord_title: 'Message diuenmii on Discord (opens the profile, then press Message)',
-    btn_kofi: 'Support me · Ko-fi', btn_kofi_title: 'Buy me a coffee on Ko-fi (opens ko-fi.com/holimo)',
+    btn_discord: 'Contact on Discord', btn_discord_title: 'message diuenmii (opens the profile, then press Message)',
+    btn_kofi: 'Support me on Ko-fi', btn_kofi_title: 'buy me a coffee (ko-fi.com/holimo)',
 
     // ---- entity tabs
     hint_chars: 'Visual definitions written here are the ONLY source for the image prompt (nothing is read from the ST card). Bind = auto-load in a chat / card. Referenced in plan via $keyword.',
@@ -169,8 +169,8 @@ const vi = {
     tab_gallery: 'Thư viện', tab_help: 'Hướng dẫn', tab_generate: 'Tạo ảnh',
     lang_title: 'Ngôn ngữ',
     hdr_update: 'Update', hdr_update_title: 'Đã có IF Image mới (v{v}) trên GitHub. Bấm để mở. Cập nhật qua Extensions → Manage extensions → Update.',
-    btn_discord: 'Liên hệ · Discord', btn_discord_title: 'Nhắn tin riêng cho diuenmii trên Discord (mở hồ sơ, bấm Nhắn tin)',
-    btn_kofi: 'Ủng hộ · Ko-fi', btn_kofi_title: 'Mời mình một ly cà phê trên Ko-fi (mở ko-fi.com/holimo)',
+    btn_discord: 'Liên hệ qua Discord', btn_discord_title: 'nhắn riêng cho diuenmii (mở hồ sơ, bấm Nhắn tin)',
+    btn_kofi: 'Ủng hộ trên Ko-fi', btn_kofi_title: 'mời mình một ly cà phê (ko-fi.com/holimo)',
 
     // ---- entity tabs
     hint_chars: 'Mô tả ngoại hình viết ở đây là nguồn DUY NHẤT cho prompt ảnh (không đọc gì từ card ST). Bind = tự nạp trong chat / card. Planner gọi bằng $keyword.',
