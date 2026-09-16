@@ -12,6 +12,9 @@ import { clamp } from './util.js';
 /** @typedef {{ url:string, scene:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} TestRecord */
 
 const MAX_TEST_IMAGES = 60;
+// Regenerate keeps the replaced image as an older VERSION of the same slot (rec.history, newest first).
+const MAX_VERSIONS = 8;
+const stripHistory = r => { const { history, ...rest } = r; return rest; };
 
 export function createPipeline({ settings, getContext, backends, llm, saveImage, save = () => {}, log = () => {}, onChange = () => {} }) {
     const inflight = new Map(); // messageId -> AbortController
@@ -288,6 +291,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         try {
             const setting = await settingFor(ctx, messageId, rec?.setting ?? '', controller.signal, status);
             const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting }, controller.signal, status);
+            if (rec) fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
             const list = records(msg);
             const i = list.findIndex(r => r.url === url);
             if (i >= 0) list[i] = fresh; else list.push(fresh);
@@ -332,6 +336,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
                 const rec = todo[i];
                 status(`image ${i + 1}/${todo.length}…`);
                 const fresh = await renderCompiled(ctx, { scene: rec.scene, p: rec.p ?? 0, setting }, compiled[i], controller.signal, status);
+                fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
                 const all = records(msg);
                 const j = all.findIndex(r => r.url === rec.url);
                 if (j >= 0) all[j] = fresh; else all.push(fresh);
@@ -350,15 +355,46 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         }
     }
 
+    /**
+     * Delete the SHOWN version of an image slot. If older versions exist, the newest of them takes its
+     * place in the chat and is returned; otherwise the slot is removed entirely and null is returned.
+     */
     async function removeImage(messageId, url) {
         const ctx = getContext();
         const msg = ctx.chat[messageId];
-        if (!msg) return;
+        if (!msg) return null;
         const list = records(msg);
         const i = list.findIndex(r => r.url === url);
+        const hist = i >= 0 ? (list[i].history ?? []) : [];
+        if (hist.length) {
+            const [next, ...rest] = hist;
+            list[i] = { ...next, history: rest };
+            setMessageText(ctx, messageId, replaceImageUrl(msg.mes, url, next.url));
+            await ctx.saveChat();
+            return list[i];
+        }
         if (i >= 0) list.splice(i, 1);
         setMessageText(ctx, messageId, removeImageByUrl(msg.mes, url));
         await ctx.saveChat();
+        return null;
+    }
+
+    /** Show an older version (`versionUrl`, one of rec.history[].url) in the chat; the shown one moves into history. */
+    async function switchVersion(messageId, url, versionUrl) {
+        const ctx = getContext();
+        const msg = ctx.chat[messageId];
+        if (!msg) return null;
+        const list = records(msg);
+        const i = list.findIndex(r => r.url === url);
+        if (i < 0) return null;
+        const cur = list[i];
+        const hist = cur.history ?? [];
+        const k = hist.findIndex(h => h.url === versionUrl);
+        if (k < 0) return null;
+        list[i] = { ...hist[k], history: [stripHistory(cur), ...hist.filter((_, j) => j !== k)] };
+        setMessageText(ctx, messageId, replaceImageUrl(msg.mes, url, list[i].url));
+        await ctx.saveChat();
+        return list[i];
     }
 
     async function clear(messageId) {
@@ -439,7 +475,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     return {
-        run, regenerate, regenerateAll, removeImage, clear, migrateChat,
+        run, regenerate, regenerateAll, removeImage, switchVersion, clear, migrateChat,
         runTest, regenerateTest, removeTest, testImages: () => testList().slice(),
         cancel(messageId) {
             if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }

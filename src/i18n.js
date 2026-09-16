@@ -124,6 +124,8 @@ const en = {
     vw_edit_prompt_scene: 'Scene prompt (entities, style and quality/negative are re-applied on top):',
     vw_edit_prompt_final: 'Final prompt (sent to the image backend as-is):',
     vw_confirm_delete: 'Remove this image?', vw_regenerated: 'Regenerated.',
+    vw_versions: 'Versions', vw_ver_current: 'Shown in the chat', vw_ver_older: 'Older version - click to show it in the chat instead',
+    vw_ver_switched: 'Version swapped.', vw_confirm_delete_ver: 'Delete this version? The next older one will be shown in the chat instead.',
 
     // ---- chat
     chat_fold_btn: 'Image', chat_fold_title: 'IF Imgen image — click to show / hide',
@@ -252,6 +254,8 @@ const vi = {
     vw_edit_prompt_scene: 'Prompt cảnh (nhân vật, style và quality/negative sẽ được ghép lại lên trên):',
     vw_edit_prompt_final: 'Prompt cuối (gửi thẳng cho backend ảnh):',
     vw_confirm_delete: 'Xóa ảnh này?', vw_regenerated: 'Đã vẽ lại.',
+    vw_versions: 'Phiên bản', vw_ver_current: 'Đang hiển thị trong chat', vw_ver_older: 'Phiên bản cũ - bấm để đổi sang hiển thị bản này',
+    vw_ver_switched: 'Đã đổi phiên bản.', vw_confirm_delete_ver: 'Xóa phiên bản này? Bản cũ kế tiếp sẽ được hiển thị trong chat.',
 
     // ---- chat
     chat_fold_btn: 'Ảnh', chat_fold_title: 'Ảnh IF Imgen — bấm để hiện / ẩn',

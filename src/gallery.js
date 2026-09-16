@@ -16,7 +16,7 @@ export function collectChatImages(chat) {
         for (const img of listImages(m.mes)) {
             const url = safeImageUrl(img.url);
             const rec = recs.find(r => r.url === url) ?? recs.find(r => r.url === img.url);
-            out.push({ url, messageId: i, name: m.name ?? '', scene: rec?.scene ?? '', refined: rec?.refined ?? '', prompt: rec?.prompt ?? img.title ?? '' });
+            out.push({ url, messageId: i, name: m.name ?? '', scene: rec?.scene ?? '', refined: rec?.refined ?? '', prompt: rec?.prompt ?? img.title ?? '', history: rec?.history ?? [] });
         }
     });
     return out;
@@ -62,6 +62,9 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             </div>`;
         const q = s => box.querySelector(s);
         const img = q('img'), cap = q('.ifimgen-lightbox-cap'), st = q('.ifimgen-lightbox-status');
+        // Version strip (shown + older versions of this slot); lives right above the caption.
+        const ver = document.createElement('div'); ver.className = 'ifimgen-lightbox-versions'; cap.parentNode.insertBefore(ver, cap);
+        const fromRec = (it, r) => ({ ...it, url: r.url, scene: r.scene ?? '', refined: r.refined ?? '', prompt: r.prompt ?? '', history: r.history ?? [] });
         const setStatus = (text, cls = '') => { st.textContent = text; st.className = `ifimgen-lightbox-status ifimgen-status ${cls}`; };
         const show = () => {
             const it = items[idx];
@@ -71,6 +74,11 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
                 + (it.refined ? `<div><span class="ifimgen-cap-k">${t('vw_refined')}</span> ${escapeHtml(it.refined)}</div>` : '')
                 + (it.prompt ? `<div><span class="ifimgen-cap-k">${t('vw_final')}</span> ${escapeHtml(it.prompt)}</div>` : `<div class="ifimgen-note">${t('vw_no_prompt')}</div>`);
             q('.lb-jump').style.display = it.test ? 'none' : '';
+            const hist = it.history ?? [];
+            ver.style.display = hist.length ? '' : 'none';
+            ver.innerHTML = hist.length ? `<span class="ifimgen-cap-k">${t('vw_versions')} (${hist.length + 1})</span>`
+                + `<img class="cur" src="${escapeHtml(it.url)}" title="${t('vw_ver_current')}">`
+                + hist.map((h, k) => `<img data-k="${k}" src="${escapeHtml(h.url)}" title="${t('vw_ver_older')}">`).join('') : '';
             setStatus('');
         };
         const step = d => { if (busy) return; idx = (idx + d + items.length) % items.length; show(); };
@@ -87,7 +95,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
                     if (fresh) { items[idx] = { ...it, url: fresh.url, prompt: fresh.prompt }; show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
                 } else {
                     const fresh = await pipeline.regenerate(it.messageId, it.url, { scene: text, onStatus: s => setStatus(s) });
-                    if (fresh) { items[idx] = { ...it, url: fresh.url, scene: fresh.scene, refined: fresh.refined, prompt: fresh.prompt }; show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
+                    if (fresh) { items[idx] = fromRec(it, fresh); show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
                 }
             } catch (e) { setStatus(e.message, 'error'); }
             finally { lock(false); }
@@ -100,6 +108,19 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         q('.lb-open').addEventListener('click', () => window.open(items[idx].url, '_blank'));
         q('.lb-jump').addEventListener('click', () => { close(); jumpTo(items[idx].messageId); });
         q('.lb-regen').addEventListener('click', () => doRegen(undefined));
+        ver.addEventListener('click', async e => {
+            const im = e.target.closest('img[data-k]');
+            if (!im || busy) return;
+            const it = items[idx];
+            const h = (it.history ?? [])[Number(im.dataset.k)];
+            if (!h) return;
+            lock(true);
+            try {
+                const next = await pipeline.switchVersion(it.messageId, it.url, h.url);
+                if (next) { items[idx] = fromRec(it, next); show(); setStatus(t('vw_ver_switched'), 'ok'); onChanged(); }
+            } catch (err) { setStatus(err.message, 'error'); }
+            finally { lock(false); }
+        });
         q('.lb-edit').addEventListener('click', async () => {
             const ctx = getContext();
             const it = items[idx];
@@ -111,13 +132,15 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         });
         q('.lb-delete').addEventListener('click', async () => {
             const ctx = getContext();
-            const ok = await ctx.callGenericPopup(t('vw_confirm_delete'), ctx.POPUP_TYPE.CONFIRM);
+            const ok = await ctx.callGenericPopup(t(items[idx].history?.length ? 'vw_confirm_delete_ver' : 'vw_confirm_delete'), ctx.POPUP_TYPE.CONFIRM);
             if (ok !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
             const it = items[idx];
             lock(true);
             try {
-                if (it.test) pipeline.removeTest(it.url); else await pipeline.removeImage(it.messageId, it.url);
-                items.splice(idx, 1); onChanged();
+                let next = null;
+                if (it.test) pipeline.removeTest(it.url); else next = await pipeline.removeImage(it.messageId, it.url);
+                if (next) items[idx] = fromRec(it, next); else items.splice(idx, 1);
+                onChanged();
                 if (!items.length) return close();
                 idx = Math.min(idx, items.length - 1); show();
             }
