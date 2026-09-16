@@ -152,6 +152,21 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     });
 
     // ---- Box 2: model + per-model profile
+    const CUSTOM = '__custom__';
+    function syncCombo(selId, inputId, fetched, builtin) {
+        const sel = $(selId), inp = $(inputId);
+        const cur = inp.value.trim();
+        const list = [...new Set([...(fetched ?? []), ...builtin, cur].filter(Boolean))];
+        fillSelect(sel, [...list.map(v => ({ value: v, label: v })), { value: CUSTOM, label: t('opt_custom') }], cur || CUSTOM);
+        inp.style.display = sel.value === CUSTOM ? '' : 'none';
+    }
+    for (const [selId, inputId] of [['ifimgen_p_sampler_sel', 'ifimgen_p_sampler_sd'], ['ifimgen_p_scheduler_sel', 'ifimgen_p_scheduler_sd']]) {
+        $(selId).addEventListener('change', () => {
+            const v = $(selId).value;
+            if (v === CUSTOM) { $(inputId).value = ''; $(inputId).style.display = ''; $(inputId).focus(); }
+            else { $(inputId).value = v; $(inputId).style.display = 'none'; }
+        });
+    }
     const modelSel = $('ifimgen_model');
     let editingModel = ''; // model whose params are shown in the box
     function fillModels() {
@@ -168,12 +183,15 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         $('ifimgen_p_scheduler_sd').style.display = naiMode ? 'none' : '';
         $('ifimgen_p_sampler_nai').style.display = naiMode ? '' : 'none';
         $('ifimgen_p_scheduler_nai').style.display = naiMode ? '' : 'none';
+        $('ifimgen_p_sampler_sel').style.display = naiMode ? 'none' : '';
+        $('ifimgen_p_scheduler_sel').style.display = naiMode ? 'none' : '';
         if (naiMode) { fillSelect($('ifimgen_p_sampler_nai'), NAI_SAMPLERS, p.sampler); fillSelect($('ifimgen_p_scheduler_nai'), NAI_SCHEDULERS, p.scheduler); }
         else {
             $('ifimgen_p_sampler_sd').value = p.sampler; $('ifimgen_p_scheduler_sd').value = p.scheduler;
-            // Suggestion lists: names fetched from ComfyUI first (workflow mode), then the built-in A1111 + Comfy names.
-            const dl = (id, fetched, builtin) => { $(id).innerHTML = [...new Set([...(fetched ?? []), ...builtin])].map(x => `<option value="${escapeHtml(x)}">`).join(''); };
-            dl('ifimgen_dl_samplers', c.sd.samplers, SD_SAMPLERS); dl('ifimgen_dl_schedulers', c.sd.schedulers, SD_SCHEDULERS);
+            // Dropdown of known names: fetched from the endpoint first (workflow mode), then built-in A1111 + Comfy names,
+            // plus "Custom…" which reveals the text field. The text field stays the source of truth for readParams().
+            syncCombo('ifimgen_p_sampler_sel', 'ifimgen_p_sampler_sd', c.sd.samplers, SD_SAMPLERS);
+            syncCombo('ifimgen_p_scheduler_sel', 'ifimgen_p_scheduler_sd', c.sd.schedulers, SD_SCHEDULERS);
         }
         for (const k of ['steps', 'cfg', 'width', 'height']) $(`ifimgen_p_${k}`).value = p[k];
         syncSizePreset();
@@ -663,8 +681,8 @@ function settingsPanel() {
             ${boxTitle('box', `${t('box_model')} — <span id="ifimgen_model_be"></span>`, `<span id="ifimgen_model_badge" class="ifimgen-chip active" style="display:none">${t('chip_default')}</span>`)}
             <div class="ifimgen-row">${btn({ id: 'ifimgen_fetch_models', icon: 'refresh', title: t('btn_fetch_models') })}<select id="ifimgen_model" class="text_pole"></select></div>
             <div class="ifimgen-grid2">
-                <div class="ifimgen-row"><label>${t('lbl_sampler')}</label><input id="ifimgen_p_sampler_sd" class="text_pole" type="text" list="ifimgen_dl_samplers" autocomplete="off"><datalist id="ifimgen_dl_samplers"></datalist><select id="ifimgen_p_sampler_nai" class="text_pole" style="display:none"></select></div>
-                <div class="ifimgen-row"><label>${t('lbl_scheduler')}</label><input id="ifimgen_p_scheduler_sd" class="text_pole" type="text" list="ifimgen_dl_schedulers" autocomplete="off"><datalist id="ifimgen_dl_schedulers"></datalist><select id="ifimgen_p_scheduler_nai" class="text_pole" style="display:none"></select></div>
+                <div class="ifimgen-row"><label>${t('lbl_sampler')}</label><select id="ifimgen_p_sampler_sel" class="text_pole"></select><input id="ifimgen_p_sampler_sd" class="text_pole ifimgen-custom" type="text" autocomplete="off" style="display:none"><select id="ifimgen_p_sampler_nai" class="text_pole" style="display:none"></select></div>
+                <div class="ifimgen-row"><label>${t('lbl_scheduler')}</label><select id="ifimgen_p_scheduler_sel" class="text_pole"></select><input id="ifimgen_p_scheduler_sd" class="text_pole ifimgen-custom" type="text" autocomplete="off" style="display:none"><select id="ifimgen_p_scheduler_nai" class="text_pole" style="display:none"></select></div>
                 ${numRow('ifimgen_p_steps', t('lbl_steps'), 1, 150)}${numRow('ifimgen_p_cfg', t('lbl_cfg'), 0, 30, 0.5)}
                 <div class="ifimgen-row ifimgen-span2"><label for="ifimgen_p_size">${t('lbl_size')}</label><select id="ifimgen_p_size" class="text_pole"></select></div>
                 ${numRow('ifimgen_p_width', t('lbl_width'), 256, 2048, 64)}${numRow('ifimgen_p_height', t('lbl_height'), 256, 2048, 64)}
