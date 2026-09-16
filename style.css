@@ -215,3 +215,5 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
     .ifimgen-lightbox-bar .ifimgen-btn.icon { flex: 0 0 38px; width: 38px; }
     .ifimgen-title .ifimgen-discord { flex: 1 1 auto; }
 }
+
+.ifimgen-row .ifimgen-custom { flex: 1; min-width: 0; }
