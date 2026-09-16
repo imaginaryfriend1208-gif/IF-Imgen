@@ -35,6 +35,7 @@ async function saveImage(b64, charName) {
 }
 
 let drawer = null;
+let floater = null; // mounted last, from a dynamic import guarded by try/catch - see mountFloaterSafe()
 const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, save, log: LOG, onChange: id => { drawer?.refreshGallery(); if (settings.generate.collapseImages && typeof id === 'number' && id >= 0) setTimeout(() => foldImages(id), 50); } });
 const viewer = createViewer({ getContext, pipeline, onChanged: () => drawer?.refreshGallery() });
 
@@ -145,11 +146,42 @@ eventSource.on(event_types.GENERATION_ENDED, async () => {
         if (r?.skipped && r.skipped !== 'already has images') LOG('skipped:', r.skipped);
     } catch (e) { toastr.error(e.message, 'IF Imgen'); }
 });
-eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); foldAll(); drawer?.refreshGallery(); }, 300); });
+eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); foldAll(); drawer?.refreshGallery(); floater?.repaint(); }, 300); });
 eventSource.on(event_types.MESSAGE_DELETED, () => drawer?.refreshGallery());
-eventSource.on(event_types.MESSAGE_EDITED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); });
-eventSource.on(event_types.MESSAGE_SWIPED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); });
-eventSource.on(event_types.MORE_MESSAGES_LOADED, () => { addAllButtons(); foldAll(); });
+eventSource.on(event_types.MESSAGE_EDITED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
+eventSource.on(event_types.MESSAGE_SWIPED, id => { drawer?.refreshGallery(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
+eventSource.on(event_types.MORE_MESSAGES_LOADED, () => { addAllButtons(); foldAll(); floater?.repaint(); });
+
+// ---- floating quick-action button (src/floater.js). Loaded AFTER the drawer through a dynamic import in
+// try/catch: a broken floater must never stop index.js from evaluating (that is what removed the whole
+// extension from the UI in the first attempt).
+function openSettingsPanel(tab) {
+    try {
+        const block = document.getElementById('rm_extensions_block');
+        if (block && block.offsetParent === null) document.querySelector('#extensions-settings-button .drawer-toggle')?.click();
+        const wrap = document.getElementById('ifimgen_root')?.closest('.inline-drawer');
+        const content = wrap?.querySelector('.inline-drawer-content');
+        if (content && getComputedStyle(content).display === 'none') wrap.querySelector('.inline-drawer-toggle')?.click();
+        drawer?.showTab(tab);
+        setTimeout(() => wrap?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+    } catch (e) { LOG('open settings failed', e); }
+}
+async function mountFloaterSafe() {
+    try {
+        const { mountFloater } = await import('./src/floater.js');
+        floater = mountFloater({
+            settings, save, pipeline, getContext,
+            openSettings: () => openSettingsPanel('generate'),
+            openGallery: () => openSettingsPanel('gallery'),
+            onCollapseToggle: () => {
+                settings.generate.collapseImages = !settings.generate.collapseImages; save();
+                document.body.classList.toggle('ifimgen-collapse', settings.generate.collapseImages);
+                if (settings.generate.collapseImages) foldImages();
+                const cb = document.getElementById('ifimgen_collapse'); if (cb) cb.checked = settings.generate.collapseImages;
+            },
+        });
+    } catch (e) { LOG('floater failed to load (extension keeps working without it)', e); }
+}
 
 // ---- slash command
 getContext().SlashCommandParser?.addCommandObject?.(getContext().SlashCommand.fromProps({
@@ -189,13 +221,15 @@ jQuery(async () => {
         e.preventDefault(); e.stopPropagation(); window.open(REPO_URL, '_blank', 'noopener');
     });
     const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, discordUrl: DISCORD_URL };
-    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
+    drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); floater?.refresh(); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
     drawerDeps.onAlignChange = v => applyAlign(v);
+    drawerDeps.onFloaterChange = on => floater?.setEnabled(on);
     drawer = mountDrawer(drawerDeps);
     try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
     addAllButtons();
     foldAll();
+    await mountFloaterSafe();
     LOG(`v${VERSION} loaded (settings ns: ${MODULE})`);
     checkUpdate();
     setInterval(checkUpdate, 6 * 60 * 60 * 1000);

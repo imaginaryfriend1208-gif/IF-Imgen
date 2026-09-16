@@ -146,6 +146,8 @@ test('settings migration v1 -> v2 moves sampler/steps into model profiles', () =
     const fresh = ensureSettings({});
     assert.equal(fresh.version, SETTINGS_VERSION); assert.deepEqual(fresh.connection.profiles, { sd: {}, nai: {} });
     assert.equal(fresh.connection.sd.useWorkflow, false);
+    assert.equal(fresh.generate.floater, true, 'floating quick-action button on by default'); assert.equal(fresh.generate.floaterPos, null);
+    assert.equal(ensureSettings({ IF_Imgen: { version: 2, generate: { floater: false, floaterPos: { x: 10, y: 20 } } } }).generate.floater, false, 'user choice kept');
     // v0.10.0 transitional "comfy" backend folds into sd (workflow, url, model, profiles, active backend).
     const old = ensureSettings({ IF_Imgen: { version: 2, connection: { backend: 'comfy', sd: { url: 'http://a', model: '' }, comfy: { url: 'http://c:8188', model: 'k.safetensors', workflow: '{"1":{"class_type":"KSampler","inputs":{}}}' }, profiles: { sd: {}, comfy: { 'k.safetensors': { steps: 8 } }, nai: {} } } } });
     assert.equal(old.connection.backend, 'sd'); assert.equal(old.connection.sd.useWorkflow, true); assert.equal(old.connection.sd.url, 'http://c:8188');
