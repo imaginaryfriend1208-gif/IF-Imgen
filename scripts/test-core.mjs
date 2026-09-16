@@ -9,8 +9,9 @@ import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
-import { parseFacets, facetsText, expandScene, buildRefinePrompt, rosterLine } from '../src/scene.js';
+import { parseFacets, facetsText, expandScene, buildRefinePrompt, buildSettingPrompt, parseRefined, rosterLine } from '../src/scene.js';
 import { rosterText, isBound } from '../src/entities.js';
+import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
 
 let passed = 0;
 const test = (name, fn) => { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); process.exitCode = 1; } };
@@ -143,7 +144,7 @@ test('settings migration v1 -> v2 moves sampler/steps into model profiles', () =
     assert.equal(m.connection.profiles.nai['*'], undefined, 'nai had no legacy params');
     assert.equal(m.generate.useNegative, true, 'new keys filled');
     const fresh = ensureSettings({});
-    assert.equal(fresh.version, SETTINGS_VERSION); assert.deepEqual(fresh.connection.profiles, { sd: {}, nai: {} });
+    assert.equal(fresh.version, SETTINGS_VERSION); assert.deepEqual(fresh.connection.profiles, { sd: {}, comfy: {}, nai: {} });
 });
 
 test('image snippet: bare form (no title), URL-encoded; legacy title form still parsed + migrated', () => {
@@ -199,7 +200,27 @@ test('refine prompt: cast carries base look + only referenced details; style + e
     assert.ok(user.includes('Yenka (user persona): Yenka is a small girl'));
     assert.ok(user.includes('- back: a big tattoo') && !user.includes('- outfit:'), 'only referenced facets listed');
     assert.ok(user.includes('Rosario (character): a tall mature man') && !user.includes('- front:'));
-    assert.ok(user.includes('STYLE: anime style') && user.includes('SCENE') && user.includes(ex.text));
+    assert.ok(user.includes('STYLE: anime style') && user.includes('SHOT DRAFTS') && user.includes(ex.text));
+    assert.ok(system.includes('exactly 1 objects'), '{{count}} filled');
+});
+
+test('batch refine: ONE call carries the scene setting + all shots; facets of every shot listed once; parseRefined maps by index', () => {
+    const s1 = expandScene({ scene: '$yenka walks away showing $yenka.back', characters: [rosario], personas: [yenka] });
+    const s2 = expandScene({ scene: '$rosario shows $rosario.front to $yenka', characters: [rosario], personas: [yenka] });
+    const { system, user } = buildRefinePrompt({ system: '', dialect: 'tags', setting: 'LOCATION: rainy street', shots: [{ expanded: s1.text, used: s1.used }, { expanded: s2.text, used: s2.used }], characters: [rosario], personas: [yenka], style: null });
+    assert.ok(system.includes('exactly 2 objects') && system.includes('danbooru'));
+    assert.ok(user.indexOf('SCENE SETTING') < user.indexOf('CAST:') && user.includes('LOCATION: rainy street'));
+    assert.ok(user.includes('[1] ' + s1.text) && user.includes('[2] ' + s2.text));
+    assert.ok(user.includes('- back: a big tattoo') && user.includes('- front: scar') && (user.match(/- back:/g) || []).length === 1);
+    assert.deepEqual(parseRefined('ok\n[{"i":2,"prompt":"\\"B\\""},{"i":1,"prompt":"A"}]', 2), ['A', 'B']);
+    assert.deepEqual(parseRefined('["x","y","z"]', 2), ['x', 'y'], 'extra items dropped');
+    assert.deepEqual(parseRefined('[{"prompt":"only"}]', 2), ['only', ''], 'missing slot stays empty');
+    assert.deepEqual(parseRefined('plain text prompt', 1), ['plain text prompt'], 'single shot tolerates plain text');
+    assert.deepEqual(parseRefined('garbage', 2), ['', '']);
+    const st = buildSettingPrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka] });
+    assert.ok(st.system.includes('WEARING') && st.system.includes('PEOPLE PRESENT'));
+    assert.ok(st.user.includes('outfit: white button-up shirt') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
+    assert.equal(defaultSettings().generate.settingSystem, st.system);
 });
 
 test('compilePrompt merged=true: cast fragments not prepended (refine already merged them), LoRA/negative/style still applied', () => {
@@ -256,6 +277,82 @@ test('import/export roundtrip + keyword dedupe', () => {
     const r2 = importEntities('characters', list, { items: [{ name: 'Lyna 2', keyword: 'lyna' }] });
     assert.equal(r2.updated, 1); assert.equal(list.length, 1);
     assert.ok(importEntities('characters', list, {}).errors.length === 1);
+});
+
+
+// ---- ComfyUI workflow (the user's Krea2 graph, trimmed): switches, LoRA loaders, size-preset math nodes.
+const KREA = {
+    '29': { inputs: { filename_prefix: 'Krea2_turbo', images: ['30:8', 0] }, class_type: 'SaveImage' },
+    '30:6': { inputs: { text: 'A woman holds an ice cream cone.', clip: ['30:11', 0] }, class_type: 'CLIPTextEncode' },
+    '30:5': { inputs: { width: ['30:55', 1], height: ['30:56', 1], batch_size: 1 }, class_type: 'EmptyLatentImage' },
+    '30:3': { inputs: { seed: 749157341333067, steps: 8, cfg: 1, sampler_name: 'euler', scheduler: 'simple', denoise: 1, model: ['30:26', 0], positive: ['30:6', 0], negative: ['30:13', 0], latent_image: ['30:5', 0] }, class_type: 'KSampler' },
+    '30:8': { inputs: { samples: ['30:3', 0], vae: ['30:12', 0] }, class_type: 'VAEDecode' },
+    '30:10': { inputs: { ckpt_name: 'DasiwaKrea2TurboRaw_mirroredskiesV1Turbo.safetensors' }, class_type: 'CheckpointLoaderSimple' },
+    '30:11': { inputs: { clip_name: 'qwen3vl_4b_fp8_scaled.safetensors', type: 'krea2', device: 'default' }, class_type: 'CLIPLoader' },
+    '30:12': { inputs: { vae_name: 'qwen_image_vae.safetensors' }, class_type: 'VAELoader' },
+    '30:13': { inputs: { conditioning: ['30:6', 0] }, class_type: 'ConditioningZeroOut' },
+    '30:25': { inputs: { lora_name: 'krea2_softwatercolor.safetensors', strength_model: 0.8, model: ['30:10', 0] }, class_type: 'LoraLoaderModelOnly' },
+    '30:26': { inputs: { switch: true, on_false: ['30:10', 0], on_true: ['30:25', 0] }, class_type: 'ComfySwitchNode' },
+    '30:54': { inputs: { choice: 'Portrait', index: 0 }, class_type: 'CustomCombo' },
+    '30:55': { inputs: { expression: '832 if a == 0 else 1024', 'values.a': ['30:54', 1] }, class_type: 'ComfyMathExpression' },
+    '30:56': { inputs: { expression: '1216 if a == 0 else 1024', 'values.a': ['30:54', 1] }, class_type: 'ComfyMathExpression' },
+};
+
+test('comfy: parseWorkflow accepts API format (+ {prompt:{}} wrapper), rejects UI export / junk', () => {
+    assert.ok(parseWorkflow(JSON.stringify(KREA)).nodes);
+    assert.ok(parseWorkflow(JSON.stringify({ prompt: KREA })).nodes['30:3']);
+    assert.match(parseWorkflow(JSON.stringify({ nodes: [], links: [] })).error, /API format/);
+    assert.match(parseWorkflow('{"a":1}').error, /class_type/);
+    assert.match(parseWorkflow('nope').error, /valid JSON/);
+    assert.match(parseWorkflow('').error, /empty/);
+    assert.equal(workflowInfo(JSON.stringify(KREA)).error.includes('%prompt%'), true, 'warns when prompt is not wired');
+});
+
+test('comfy: autoMapWorkflow wires prompt, sampler params, latent size (through links) and checkpoint; skips zero-out negative; idempotent', () => {
+    const r = autoMapWorkflow(JSON.stringify(KREA));
+    assert.equal(r.error, '');
+    const n = r.nodes;
+    assert.equal(n['30:6'].inputs.text, '%prompt%');
+    assert.equal(n['30:3'].inputs.seed, '%seed%'); assert.equal(n['30:3'].inputs.steps, '%steps%'); assert.equal(n['30:3'].inputs.cfg, '%scale%');
+    assert.equal(n['30:3'].inputs.sampler_name, '%sampler%'); assert.equal(n['30:3'].inputs.scheduler, '%scheduler%');
+    assert.equal(n['30:5'].inputs.width, '%width%'); assert.equal(n['30:5'].inputs.height, '%height%');
+    assert.equal(n['30:10'].inputs.ckpt_name, '%model%');
+    assert.equal(r.originalModel, 'DasiwaKrea2TurboRaw_mirroredskiesV1Turbo.safetensors');
+    assert.equal(n['30:13'].class_type, 'ConditioningZeroOut', 'negative stays zero-out (same encoder as positive -> not mapped)');
+    assert.ok(!Object.values(n).some(x => x.inputs?.text === '%negative_prompt%'));
+    assert.deepEqual(Object.keys(r.mapped).sort(), ['height', 'model', 'prompt', 'sampler', 'scale', 'scheduler', 'seed', 'steps', 'width']);
+    assert.equal(n['30:11'].inputs.type, 'krea2', 'untouched nodes keep their values');
+    assert.equal(autoMapWorkflow(r.text).text, r.text, 'idempotent');
+    const info = workflowInfo(r.text);
+    assert.ok(info.ok && info.error === '' && info.placeholders.includes('prompt') && info.nodeCount === Object.keys(KREA).length);
+});
+
+test('comfy: renderWorkflow fills quoted placeholders as typed JSON, bare ones spliced+escaped; random seed; %model% requires a model', () => {
+    const text = autoMapWorkflow(JSON.stringify(KREA)).text.replace('"%prompt%"', '"masterpiece, %prompt%"');
+    const out = renderWorkflow(text, { prompt: 'she says "hi"\nnew line', negative_prompt: '', model: 'm.safetensors', sampler: 'euler', scheduler: 'simple', steps: 8, cfg: 1, width: 832, height: 1216, seed: 42 });
+    assert.equal(out['30:6'].inputs.text, 'masterpiece, she says "hi"\nnew line');
+    assert.equal(out['30:3'].inputs.steps, 8); assert.equal(out['30:3'].inputs.cfg, 1); assert.equal(out['30:3'].inputs.seed, 42);
+    assert.equal(out['30:5'].inputs.width, 832); assert.equal(out['30:5'].inputs.height, 1216);
+    assert.equal(out['30:10'].inputs.ckpt_name, 'm.safetensors');
+    const rnd = renderWorkflow(text, { prompt: 'x', model: 'm', seed: -1 });
+    assert.ok(Number.isInteger(rnd['30:3'].inputs.seed) && rnd['30:3'].inputs.seed >= 0);
+    assert.throws(() => renderWorkflow(text, { prompt: 'x', model: '' }), /no default model/);
+    assert.ok(PLACEHOLDERS.includes('negative_prompt') && PLACEHOLDERS.includes('denoise'));
+});
+
+test('comfy: extractLoras pulls <lora:name:w> tags; injectLoras chains LoraLoaderModelOnly in front of the sampler model input', () => {
+    const { text, loras } = extractLoras('masterpiece, <lora:krea2_darkbrush:0.7>, 1girl, <lora:dotmatrix.safetensors>, <lora:x:0.5:0.3> rain');
+    assert.equal(text, 'masterpiece, 1girl, rain');
+    assert.deepEqual(loras, [{ name: 'krea2_darkbrush', weight: 0.7 }, { name: 'dotmatrix.safetensors', weight: 1 }, { name: 'x', weight: 0.5 }]);
+    const nodes = structuredClone(KREA);
+    const r = injectLoras(nodes, loras);
+    assert.deepEqual(r.injected, ['krea2_darkbrush.safetensors', 'dotmatrix.safetensors', 'x.safetensors']);
+    assert.deepEqual(nodes['30:3'].inputs.model, ['ifimgen_lora_3', 0], 'sampler now fed by the last LoRA');
+    assert.deepEqual(nodes['ifimgen_lora_1'].inputs.model, ['30:26', 0], 'first LoRA takes the original model source (after the switch)');
+    assert.deepEqual(nodes['ifimgen_lora_2'].inputs.model, ['ifimgen_lora_1', 0]);
+    assert.equal(nodes['ifimgen_lora_1'].inputs.strength_model, 0.7);
+    assert.deepEqual(injectLoras(structuredClone(KREA), []).injected, []);
+    assert.match(injectLoras({ a: { class_type: 'SaveImage', inputs: {} } }, loras).skipped, /KSampler/);
 });
 
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }

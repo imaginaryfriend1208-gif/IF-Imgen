@@ -1,13 +1,14 @@
 // IF Imgen - per-message pipeline: paragraphs -> planner LLM -> N images -> insert in place.
 // Each image is also recorded in message.extra.ifimgen so it can be regenerated later.
+// Refine mode per reply: planner (1 call) -> scene setting (1 call) -> ONE batch refine for ALL images (1 call).
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
 import { resolveEntities, rosterText } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
-import { expandScene, buildRefinePrompt } from './scene.js';
+import { expandScene, buildSettingPrompt, buildRefinePrompt, parseRefined } from './scene.js';
 import { clamp } from './util.js';
 
-/** @typedef {{ url:string, p:number, scene:string, expanded:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord */
+/** @typedef {{ url:string, p:number, scene:string, expanded:string, setting:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord */
 /** @typedef {{ url:string, scene:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} TestRecord */
 
 const MAX_TEST_IMAGES = 60;
@@ -73,29 +74,52 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
-     * Compile a planner scene -> final prompt with the current entities/style/settings.
-     * mode 'plan'   : tokens ($yenka, $yenka.back) expanded verbatim, cast fragments prepended by compiler.
-     * mode 'refine' : second LLM call merges cast base + referenced details + scene into one prompt.
+     * Refine step 1: ONE LLM call writes the shared SCENE SETTING of a reply
+     * (location, who is present, what each wears, what they do, poses).
+     * Every image prompt of that reply is later written against this text.
      */
-    async function compileScene(ctx, scene, backendId, signal) {
+    async function buildSetting(ctx, { paragraphs, context, ents }, signal) {
+        const msgs = buildSettingPrompt({ system: settings.generate.settingSystem, paragraphs, context, characters: ents.characters, personas: ents.personas });
+        const setting = (await llm.chat({ ...msgs, signal })).trim();
+        if (!setting) throw new Error('Scene-setting LLM returned an empty setting.');
+        return setting;
+    }
+
+    /**
+     * Compile N planner scenes of ONE message -> N final prompts.
+     * mode 'plan'   : tokens ($yenka, $yenka.back) expanded verbatim, cast fragments prepended by compiler. No LLM.
+     * mode 'refine' : ONE batch LLM call for all scenes (setting + cast + N drafts -> N prompts), never one call per image,
+     *                 so location / people / clothing stay identical across the images of a reply.
+     * @returns {Promise<{ prompt:string, negative:string, ents:object, expanded:string, refined:string, unknown:string[] }[]>}
+     */
+    async function compileScenes(ctx, scenes, backendId, signal, { setting = '' } = {}) {
         const g = settings.generate;
         const ident = chatIdentity(ctx);
-        const ents = resolveEntities(settings, { text: scene, ...ident });
-        const ex = expandScene({ scene, characters: ents.characters, personas: ents.personas });
-        if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
-        let refined = '';
+        // Entities are resolved on the union of all scenes so every image carries the same cast.
+        const ents = resolveEntities(settings, { text: scenes.join('\n'), ...ident });
+        const shots = scenes.map(scene => expandScene({ scene, characters: ents.characters, personas: ents.personas }));
+        for (const ex of shots) if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
+        let refined = scenes.map(() => '');
         if (g.mode === 'refine') {
-            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, scene, expanded: ex.text, used: ex.used, characters: ents.characters, personas: ents.personas, style: ents.style });
-            refined = (await llm.chat({ ...msgs, signal })).replace(/^["'`\s]+|["'`\s]+$/g, '');
-            if (!refined) throw new Error('Refine LLM returned an empty prompt.');
+            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, setting, shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
+            refined = parseRefined(await llm.chat({ ...msgs, signal }), scenes.length);
+            if (refined.every(r => !r)) throw new Error('Refine LLM returned no usable prompts.');
+            refined.forEach((r, i) => { if (!r) log(`refine: shot ${i + 1} missing in reply, falling back to the expanded draft`); });
         }
-        const { prompt, negative } = compilePrompt({ scene: refined || ex.text, ...ents, settings, backend: backendId, merged: Boolean(refined) });
-        return { prompt, negative, ents, expanded: ex.text, refined, unknown: ex.unknown };
+        return shots.map((ex, i) => {
+            const { prompt, negative } = compilePrompt({ scene: refined[i] || ex.text, ...ents, settings, backend: backendId, merged: Boolean(refined[i]) });
+            return { prompt, negative, ents, expanded: ex.text, refined: refined[i], unknown: ex.unknown };
+        });
+    }
+
+    /** Single-scene convenience (regenerate / preview). */
+    async function compileScene(ctx, scene, backendId, signal, opt) {
+        return (await compileScenes(ctx, [scene], backendId, signal, opt))[0];
     }
 
     /**
      * Preview helper: compile the SAME scene both ways regardless of the active mode.
-     * plan   = no LLM; refine = one LLM call (errors are returned, not thrown).
+     * plan = no LLM; refine = one LLM call, no setting step (errors are returned, not thrown).
      */
     async function compileBoth(scene, signal) {
         const ctx = getContext();
@@ -107,8 +131,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const plan = compilePrompt({ scene: ex.text, ...ents, settings, backend: backendId, merged: false });
         let refine = null;
         try {
-            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, scene, expanded: ex.text, used: ex.used, characters: ents.characters, personas: ents.personas, style: ents.style });
-            const refined = (await llm.chat({ ...msgs, signal })).replace(/^["'`\s]+|["'`\s]+$/g, '');
+            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, shots: [{ expanded: ex.text, used: ex.used }], characters: ents.characters, personas: ents.personas, style: ents.style });
+            const refined = parseRefined(await llm.chat({ ...msgs, signal }), 1)[0];
             if (!refined) throw new Error('Refine LLM returned an empty prompt.');
             refine = { refined, ...compilePrompt({ scene: refined, ...ents, settings, backend: backendId, merged: true }) };
         } catch (e) {
@@ -128,15 +152,23 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         return { url, backend: backend.id, model: params.model ?? '' };
     }
 
-    async function render(ctx, { scene, p }, signal, status) {
+    /** Render one already-compiled shot and build its record. */
+    async function renderCompiled(ctx, { scene, p, setting = '' }, c, signal, status) {
+        const backend = backends.active();
+        const { url, model } = await renderRaw(ctx, { prompt: c.prompt, negative: c.negative }, signal, status);
+        /** @type {ImageRecord} */
+        return { url, p, scene, expanded: c.expanded, setting, refined: c.refined, prompt: c.prompt, negative: c.negative, mode: settings.generate.mode, backend: backend.id, model, at: Date.now() };
+    }
+
+    const logCompiled = (c, label = '') => log(`compiled${label} [chars: ${c.ents.characters.map(e => e.name).join(',') || '-'} | personas: ${c.ents.personas.map(e => e.name).join(',') || '-'} | style: ${c.ents.style?.name ?? '-'}]`, c.prompt);
+
+    /** Compile + render ONE scene (single regenerate). `setting` = stored scene setting of the message, reused for continuity. */
+    async function render(ctx, { scene, p, setting = '' }, signal, status) {
         const backend = backends.active();
         if (settings.generate.mode === 'refine') status('refining prompt…');
-        const { prompt, negative, ents, expanded, refined } = await compileScene(ctx, scene, backend.id, signal);
-        log(`compiled [chars: ${ents.characters.map(e => e.name).join(',') || '-'} | personas: ${ents.personas.map(e => e.name).join(',') || '-'} | style: ${ents.style?.name ?? '-'}]`, prompt);
-        const { url, model } = await renderRaw(ctx, { prompt, negative }, signal, status);
-        /** @type {ImageRecord} */
-        const rec = { url, p, scene, expanded, refined, prompt, negative, mode: settings.generate.mode, backend: backend.id, model, at: Date.now() };
-        return rec;
+        const c = await compileScene(ctx, scene, backend.id, signal, { setting });
+        logCompiled(c);
+        return renderCompiled(ctx, { scene, p, setting }, c, signal, status);
     }
 
     /**
@@ -167,20 +199,33 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         try {
             status('planning…');
             const preset = findPreset(settings, opt.presetId ?? g.presetId);
+            const context = contextText(ctx, messageId, g.contextMessages);
             const { system, user } = renderPlannerPrompt(preset, {
                 paragraphs, count, dialect: g.dialect,
                 roster: rosterText(settings, ident),
-                context: contextText(ctx, messageId, g.contextMessages),
+                context,
             });
             const reply = await llm.chat({ system, user, signal: controller.signal });
             const plan = parsePlan(reply, paragraphs.map(p => p.index)).slice(0, count);
             if (!plan.length) throw new Error('Planner returned no usable JSON plan.');
             log('plan', plan);
 
+            // Refine mode: ONE scene-setting call + ONE batch refine call for ALL images of this reply.
+            let setting = '';
+            if (g.mode === 'refine') {
+                status('writing scene setting…');
+                const ents = resolveEntities(settings, { text: plan.map(x => x.prompt).join('\n'), ...ident });
+                setting = await buildSetting(ctx, { paragraphs, context, ents }, controller.signal);
+                log('scene setting', setting);
+                status(`refining ${plan.length} prompt${plan.length > 1 ? 's' : ''} in one call…`);
+            }
+            const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting });
+            compiled.forEach((c, i) => logCompiled(c, ` #${i + 1}`));
+
             const made = [];
             for (let i = 0; i < plan.length; i++) {
                 status(`image ${i + 1}/${plan.length} (paragraph ${plan[i].p})…`);
-                made.push(await render(ctx, { scene: plan[i].prompt, p: plan[i].p }, controller.signal, status));
+                made.push(await renderCompiled(ctx, { scene: plan[i].prompt, p: plan[i].p, setting }, compiled[i], controller.signal, status));
             }
 
             // Stale check: the message may have been swiped/edited while generating.
@@ -204,6 +249,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
      * Re-render one image in place. `scene` overrides the stored planner scene;
      * entities/style/settings are re-applied at compile time, so edits to
      * characters or styles take effect without touching the chat by hand.
+     * The stored scene setting of the image is reused so the regen keeps continuity.
      */
     async function regenerate(messageId, url, { scene, onStatus } = {}) {
         const ctx = getContext();
@@ -217,7 +263,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         begin(messageId, controller);
         const status = s => { log(`#${messageId} regen ${s}`); note(s); onStatus?.(s); };
         try {
-            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0 }, controller.signal, status);
+            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting: rec?.setting ?? '' }, controller.signal, status);
             const list = records(msg);
             const i = list.findIndex(r => r.url === url);
             if (i >= 0) list[i] = fresh; else list.push(fresh);
@@ -236,7 +282,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     /**
      * Re-render EVERY image of a message with its stored scene and position
-     * (no new planning). Images without a stored scene (legacy) are skipped.
+     * (no new planning). All scenes are compiled in ONE batch (refine = one LLM call)
+     * against the stored scene setting. Images without a stored scene (legacy) are skipped.
      * @returns {Promise<{ regenerated:number, skipped:number }>}
      */
     async function regenerateAll(messageId, { onStatus } = {}) {
@@ -249,13 +296,18 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const controller = new AbortController();
         begin(messageId, controller);
         const status = s => { log(`#${messageId} regen-all ${s}`); note(s); onStatus?.(s); };
-        let regenerated = 0, skipped = 0;
+        const todo = list.filter(r => String(r.scene ?? '').trim());
+        let regenerated = 0;
+        const skipped = list.length - todo.length;
         try {
-            for (let i = 0; i < list.length; i++) {
-                const rec = list[i];
-                if (!String(rec.scene ?? '').trim()) { skipped++; continue; }
-                status(`image ${i + 1}/${list.length}…`);
-                const fresh = await render(ctx, { scene: rec.scene, p: rec.p ?? 0 }, controller.signal, status);
+            if (!todo.length) { status('done (0)'); return { regenerated, skipped }; }
+            const setting = todo.find(r => r.setting)?.setting ?? '';
+            if (settings.generate.mode === 'refine') status(`refining ${todo.length} prompt${todo.length > 1 ? 's' : ''} in one call…`);
+            const compiled = await compileScenes(ctx, todo.map(r => r.scene), backends.active().id, controller.signal, { setting });
+            for (let i = 0; i < todo.length; i++) {
+                const rec = todo[i];
+                status(`image ${i + 1}/${todo.length}…`);
+                const fresh = await renderCompiled(ctx, { scene: rec.scene, p: rec.p ?? 0, setting }, compiled[i], controller.signal, status);
                 const all = records(msg);
                 const j = all.findIndex(r => r.url === rec.url);
                 if (j >= 0) all[j] = fresh; else all.push(fresh);
@@ -354,7 +406,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const r = migrateLegacyImages(m.mes);
             if (!r.changed) return;
             const list = records(m);
-            for (const { url, title } of r.recovered) if (!list.some(x => x.url === url)) list.push({ url, p: 0, scene: '', expanded: '', refined: '', prompt: title, negative: '', mode: '', backend: '', model: '', at: 0 });
+            for (const { url, title } of r.recovered) if (!list.some(x => x.url === url)) list.push({ url, p: 0, scene: '', expanded: '', setting: '', refined: '', prompt: title, negative: '', mode: '', backend: '', model: '', at: 0 });
             setMessageText(ctx, id, r.mes);
             changed++;
         });

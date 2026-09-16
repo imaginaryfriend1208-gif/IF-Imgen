@@ -1,6 +1,6 @@
 // IF Imgen - settings schema. Everything lives in extension_settings.IF_Imgen.
 import { BUILTIN_PRESETS } from './presets.js';
-import { DEFAULT_REFINE_SYSTEM } from './scene.js';
+import { DEFAULT_REFINE_SYSTEM, DEFAULT_SETTING_SYSTEM } from './scene.js';
 
 export const MODULE = 'IF_Imgen';
 export const SETTINGS_VERSION = 2;
@@ -9,6 +9,7 @@ export const SETTINGS_VERSION = 2;
 export const PARAM_KEYS = ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height'];
 export const PARAM_DEFAULTS = {
     sd: { sampler: 'Euler a', scheduler: 'Automatic', steps: 20, cfg: 6, width: 832, height: 1216 },
+    comfy: { sampler: 'euler', scheduler: 'simple', steps: 20, cfg: 5, width: 832, height: 1216 },
     nai: { sampler: 'k_euler_ancestral', scheduler: 'karras', steps: 28, cfg: 5, width: 832, height: 1216 },
 };
 
@@ -18,8 +19,11 @@ export function defaultSettings() {
         enabled: true,
         language: 'en',        // UI language: 'en' | 'vi'
         connection: {
-            backend: 'sd', // 'sd' | 'nai'  (the ACTIVE image API)
+            backend: 'sd', // 'sd' | 'comfy' | 'nai'  (the ACTIVE image API)
             sd: { url: 'http://127.0.0.1:7861', auth: '', model: '', models: [] },
+            // ComfyUI direct: `workflow` is the API-format JSON text with %placeholders% (see src/comfy.js).
+            // injectLoras: <lora:name:w> tags from entities/styles become LoraLoaderModelOnly nodes in front of the sampler.
+            comfy: { url: 'http://127.0.0.1:8188', model: '', models: [], workflow: '', injectLoras: true },
             // Optional HTTP header sent with every SD/Comfy request. Fill it in
             // Settings (Image API box) when your proxy supports it, e.g. name
             // X-IF-Imgen / value raw-prompt -> the proxy skips character
@@ -28,7 +32,7 @@ export function defaultSettings() {
             nai: { apiKey: '', model: 'nai-diffusion-4-5-full', variety: false },
             // profiles[backend][modelName] = { sampler, scheduler, steps, cfg, width, height }
             // profiles[backend]['*'] = fallback for models without a saved profile
-            profiles: { sd: {}, nai: {} },
+            profiles: { sd: {}, comfy: {}, nai: {} },
             llm: {
                 mode: 'st_profile', // 'st_profile' | 'custom'
                 profileId: '',
@@ -43,7 +47,8 @@ export function defaultSettings() {
             contextMessages: 4,         // K previous messages given to planner
             presetId: BUILTIN_PRESETS[0].id,
             dialect: 'tags',            // 'tags' | 'natural'
-            mode: 'plan',               // 'plan' = 1 LLM call (tokens expanded verbatim) | 'refine' = 2 calls (second LLM merges cast + scene)
+            mode: 'plan',               // 'plan' = 1 LLM call (tokens expanded verbatim) | 'refine' = 3 calls per reply (planner + scene setting + ONE batch refine for all images)
+            settingSystem: DEFAULT_SETTING_SYSTEM,
             refineSystem: DEFAULT_REFINE_SYSTEM,
             useQualityPrefix: true,
             qualityPrefix: 'masterpiece, best quality, amazing quality',

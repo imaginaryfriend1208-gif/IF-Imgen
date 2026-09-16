@@ -1,7 +1,10 @@
 // IF Imgen - image backends.
-//  sd : any A1111-compatible endpoint (incl. the user's Comfy-cloud proxy on :7861),
-//       routed through SillyTavern's own /api/sd/* server proxy -> no CORS work.
-//  nai: NovelAI, browser-direct (image.novelai.net answers CORS *).
+//  sd   : any A1111-compatible endpoint (incl. the user's Comfy-cloud proxy on :7861),
+//         routed through SillyTavern's own /api/sd/* server proxy -> no CORS work.
+//  comfy: ComfyUI directly, with the user's own API-format workflow (placeholders %prompt%, %steps%...).
+//         Routed through SillyTavern's /api/sd/comfy/* proxy which queues /prompt, polls /history and fetches the image.
+//  nai  : NovelAI, browser-direct (image.novelai.net answers CORS *).
+import { renderWorkflow, extractLoras, injectLoras } from './comfy.js';
 
 export const NAI_MODELS = [
     'nai-diffusion-4-5-full', 'nai-diffusion-4-5-curated', 'nai-diffusion-4-full',
@@ -45,6 +48,52 @@ export function createSdBackend({ getRequestHeaders, settings }) {
             const b64 = data?.images?.[0];
             if (!b64) throw new Error('Backend returned no image.');
             return b64;
+        },
+    };
+}
+
+// ------------------------------------------------------------------ ComfyUI
+export function createComfyBackend({ getRequestHeaders, settings }) {
+    const cfg = () => settings.connection.comfy;
+
+    async function post(path, extra = {}, signal) {
+        const r = await fetch(path, { method: 'POST', headers: { ...getRequestHeaders() }, body: JSON.stringify({ url: cfg().url, ...extra }), signal });
+        if (!r.ok) {
+            const text = (await r.text().catch(() => '')).trim();
+            throw new Error(text && text.length < 600 ? text : `${path} -> HTTP ${r.status}${r.status === 500 ? ' (ComfyUI unreachable or rejected the request)' : ''}`);
+        }
+        return r;
+    }
+
+    return {
+        id: 'comfy',
+        async test() { await post('/api/sd/comfy/ping'); return 'Connected.'; },
+        /** Checkpoints + UNets as reported by ComfyUI /object_info (raw filenames). */
+        async fetchModels() {
+            const r = await post('/api/sd/comfy/models');
+            const list = await r.json();
+            return list.map(m => m.value ?? String(m));
+        },
+        async fetchSamplers() { return (await post('/api/sd/comfy/samplers')).json(); },
+        async fetchSchedulers() { return (await post('/api/sd/comfy/schedulers')).json(); },
+        /**
+         * Render the stored workflow with this prompt/params, inject <lora:...> tags as LoraLoaderModelOnly nodes,
+         * queue it on ComfyUI. @returns {Promise<string>} base64 image
+         */
+        async generate({ prompt, negative, params, seed = -1 }, signal) {
+            const wfText = String(cfg().workflow ?? '');
+            if (!wfText.trim()) throw new Error('No ComfyUI workflow. Paste an API-format workflow in Settings -> 1 - Image API -> ComfyUI.');
+            const { text, loras } = extractLoras(prompt);
+            const nodes = renderWorkflow(wfText, {
+                prompt: text, negative_prompt: negative, model: params.model,
+                sampler: params.sampler, scheduler: params.scheduler,
+                steps: params.steps, cfg: params.cfg, width: params.width, height: params.height, seed,
+            });
+            if (cfg().injectLoras !== false) injectLoras(nodes, loras);
+            const r = await post('/api/sd/comfy/generate', { prompt: JSON.stringify({ prompt: nodes }) }, signal);
+            const data = await r.json();
+            if (!data?.data) throw new Error('ComfyUI returned no image.');
+            return data.data;
         },
     };
 }
@@ -128,6 +177,6 @@ function bytesToBase64(u8) {
 }
 
 export function createBackends(deps) {
-    const map = { sd: createSdBackend(deps), nai: createNaiBackend(deps) };
+    const map = { sd: createSdBackend(deps), comfy: createComfyBackend(deps), nai: createNaiBackend(deps) };
     return { get: id => map[id] ?? map.sd, active: () => map[deps.settings.connection.backend] ?? map.sd };
 }

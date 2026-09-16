@@ -58,7 +58,8 @@
 .ifimgen-box-title .ifimgen-chip { margin-left: auto; }
 
 /* ---- sub tabs (Comfy / NovelAI) */
-.ifimgen-subtabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ifimgen-subtabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.ifimgen-wf { font-family: Consolas, 'Courier New', monospace; font-size: .8em; white-space: pre; overflow: auto; min-height: 140px; }
 .ifimgen-subtab {
     display: flex; align-items: center; justify-content: center; gap: 8px; height: 34px;
     border: 1px solid var(--ifg-border); border-radius: 6px; background: rgba(0, 0, 0, .2); color: var(--ifg-text);

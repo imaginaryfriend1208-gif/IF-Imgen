@@ -3,10 +3,11 @@ import { escapeHtml, downloadJson, readFileAsText } from './util.js';
 import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS } from './entities.js';
 import { allPresets, createPreset, overwritePreset, resetPreset, BUILTIN_PRESETS } from './presets.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
+import { workflowInfo, autoMapWorkflow } from './comfy.js';
 import { modelParams, hasProfile } from './prompt.js';
 import { ICONS, btn, fileBtn } from './icons.js';
 import { mountGallery, galleryMarkup } from './gallery.js';
-import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM } from './scene.js';
+import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SETTING_SYSTEM } from './scene.js';
 import { t, setLang, getLang, LANGS, FLAGS } from './i18n.js';
 
 // Labels are resolved at render time (t()) so the language switch re-renders everything.
@@ -24,7 +25,8 @@ const MAIN_TABS = () => [
     { tab: 'generate', label: t('tab_generate'), icon: 'sparkles' },
 ];
 const BACKENDS = [
-    { id: 'sd', label: 'Comfy / A1111', icon: 'box' },
+    { id: 'sd', label: 'A1111 / proxy', icon: 'box' },
+    { id: 'comfy', label: 'ComfyUI', icon: 'workflow' },
     { id: 'nai', label: 'NovelAI', icon: 'cloud' },
 ];
 
@@ -94,6 +96,34 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     $('ifimgen_activate').addEventListener('click', () => { c.backend = viewing; save(); renderBackendTabs(); status('ifimgen_conn_status', `${BACKENDS.find(b => b.id === viewing).label} is now the active image API.`, 'ok'); });
     bind('ifimgen_sd_url', () => c.sd.url, v => c.sd.url = v.trim());
     bind('ifimgen_sd_auth', () => c.sd.auth, v => c.sd.auth = v.trim());
+    bind('ifimgen_comfy_url', () => c.comfy.url, v => c.comfy.url = v.trim());
+    bind('ifimgen_comfy_inject', () => c.comfy.injectLoras, v => c.comfy.injectLoras = v);
+    // ---- ComfyUI workflow: textarea + load file + auto-map placeholders
+    const wfTa = $('ifimgen_comfy_wf');
+    const showWfInfo = () => {
+        if (!String(c.comfy.workflow ?? '').trim()) return status('ifimgen_wf_status', t('st_wf_empty'));
+        const info = workflowInfo(c.comfy.workflow);
+        if (!info.ok) return status('ifimgen_wf_status', info.error, 'error');
+        status('ifimgen_wf_status', `${info.nodeCount} ${t('st_wf_nodes')} · ${info.placeholders.length ? info.placeholders.map(p => `%${p}%`).join(' ') : t('st_wf_no_ph')}${info.error ? ` — ${info.error}` : ''}`, info.error ? 'error' : 'ok');
+    };
+    bind('ifimgen_comfy_wf', () => c.comfy.workflow, v => { c.comfy.workflow = v; showWfInfo(); });
+    $('ifimgen_wf_load').addEventListener('change', async e => {
+        const f = e.target.files?.[0]; if (!f) return;
+        try { c.comfy.workflow = await readFileAsText(f); wfTa.value = c.comfy.workflow; save(); showWfInfo(); }
+        catch (err) { status('ifimgen_wf_status', err.message, 'error'); }
+        e.target.value = '';
+    });
+    $('ifimgen_wf_automap').addEventListener('click', () => {
+        const r = autoMapWorkflow(c.comfy.workflow);
+        if (!r.nodes) return status('ifimgen_wf_status', r.error, 'error');
+        c.comfy.workflow = r.text; wfTa.value = r.text;
+        // The checkpoint the workflow shipped with becomes the default model unless one is already chosen.
+        if (r.originalModel) { if (!c.comfy.models.includes(r.originalModel)) c.comfy.models.push(r.originalModel); if (!c.comfy.model) c.comfy.model = r.originalModel; }
+        save(); fillModels(); showWfInfo();
+        const done = Object.entries(r.mapped).map(([k, id]) => `${k}→[${id}]`).join(', ');
+        status('ifimgen_wf_status', `${t('st_wf_mapped')}: ${done}${r.error ? ` — ${r.error}` : ''}`, r.error ? 'error' : 'ok');
+    });
+    showWfInfo();
     bind('ifimgen_nai_key', () => c.nai.apiKey, v => c.nai.apiKey = v.trim());
     bind('ifimgen_nai_variety', () => c.nai.variety, v => c.nai.variety = v);
     $('ifimgen_test').addEventListener('click', async () => {
@@ -107,7 +137,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     let editingModel = ''; // model whose params are shown in the box
     function fillModels() {
         // Always include the current default model, even before "Fetch models" (e.g. right after migration).
-        const list = [...new Set([...(viewing === 'nai' ? NAI_MODELS : c.sd.models), c[viewing].model].filter(Boolean))];
+        const list = [...new Set([...(viewing === 'nai' ? NAI_MODELS : c[viewing].models), c[viewing].model].filter(Boolean))];
         editingModel = list.includes(editingModel) ? editingModel : (c[viewing].model || list[0] || '');
         fillSelect(modelSel, list.map(m => ({ value: m, label: `${m === c[viewing].model ? '★ ' : ''}${m}${hasProfile(settings, viewing, m) ? '' : `  ${t('st_no_profile')}`}` })), editingModel, list.length ? null : t('st_fetch_first'));
         loadParams();
@@ -143,7 +173,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         status('ifimgen_model_status', 'Fetching…');
         try {
             const models = await backends.get(viewing).fetchModels();
-            if (viewing === 'sd') c.sd.models = models;
+            if (viewing !== 'nai') c[viewing].models = models;
             if (!c[viewing].model && models[0]) c[viewing].model = models[0];
             save(); fillModels();
             status('ifimgen_model_status', `${models.length} model(s) available.`, 'ok');
@@ -198,6 +228,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_dialect', () => g.dialect, v => g.dialect = v);
     const showMode = () => root.querySelectorAll('[data-mode]').forEach(b => b.style.display = b.dataset.mode === g.mode ? '' : 'none');
     bind('ifimgen_mode', () => g.mode, v => { g.mode = v; showMode(); });
+    bind('ifimgen_setting_system', () => g.settingSystem, v => g.settingSystem = v);
+    $('ifimgen_setting_reset').addEventListener('click', () => { g.settingSystem = DEFAULT_SETTING_SYSTEM; $('ifimgen_setting_system').value = g.settingSystem; save(); });
     bind('ifimgen_refine_system', () => g.refineSystem, v => g.refineSystem = v);
     $('ifimgen_refine_reset').addEventListener('click', () => { g.refineSystem = DEFAULT_REFINE_SYSTEM; $('ifimgen_refine_system').value = g.refineSystem; save(); });
     showMode();
@@ -560,6 +592,16 @@ function settingsPanel() {
                 <div class="ifimgen-row"><label for="ifimgen_sd_auth">${t('lbl_auth')}</label><input id="ifimgen_sd_auth" class="text_pole" type="password" autocomplete="off"></div>
                 <div class="ifimgen-note">${t('note_sd')}</div>
             </div>
+            <div data-backend="comfy" style="display:none">
+                <div class="ifimgen-row"><label for="ifimgen_comfy_url">${t('lbl_url')}</label><input id="ifimgen_comfy_url" class="text_pole" type="text" placeholder="http://127.0.0.1:8188"></div>
+                <div class="ifimgen-row"><label>${t('lbl_workflow')}</label>
+                    ${fileBtn({ inputId: 'ifimgen_wf_load', title: t('btn_wf_load') })}
+                    ${btn({ id: 'ifimgen_wf_automap', icon: 'sparkles', label: t('btn_wf_automap'), title: t('tip_wf_automap') })}</div>
+                <textarea id="ifimgen_comfy_wf" class="text_pole ifimgen-wf" rows="8" spellcheck="false" placeholder='{ "3": { "class_type": "KSampler", "inputs": { "seed": "%seed%", "steps": "%steps%", ... } }, ... }'></textarea>
+                <div id="ifimgen_wf_status" class="ifimgen-status"></div>
+                <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_comfy_inject" type="checkbox"> ${t('lbl_inject_loras')}</label></div>
+                <div class="ifimgen-note">${t('note_comfy')}</div>
+            </div>
             <div data-backend="nai" style="display:none">
                 <div class="ifimgen-row"><label for="ifimgen_nai_key">${t('lbl_nai_key')}</label><input id="ifimgen_nai_key" class="text_pole" type="password" autocomplete="off"></div>
                 <div class="ifimgen-row"><label class="checkbox_label"><input id="ifimgen_nai_variety" type="checkbox"> ${t('lbl_variety')}</label></div>
@@ -630,6 +672,9 @@ function generatePanel() {
                     <option value="refine">${t('opt_mode_refine')}</option>
                 </select></div>
             <div data-mode="refine" style="display:none">
+                <div class="ifimgen-row"><label>${t('lbl_setting_system')}</label>${btn({ id: 'ifimgen_setting_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
+                <textarea id="ifimgen_setting_system" class="text_pole" rows="7"></textarea>
+                <div class="ifimgen-note">${t('note_setting')}</div>
                 <div class="ifimgen-row"><label>${t('lbl_refine_system')}</label>${btn({ id: 'ifimgen_refine_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
                 <textarea id="ifimgen_refine_system" class="text_pole" rows="7"></textarea>
                 <div class="ifimgen-note">${t('note_refine')}</div>
