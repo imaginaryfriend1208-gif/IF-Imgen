@@ -11,6 +11,7 @@ import { createBackends } from './src/backends.js';
 import { createLlm } from './src/llm.js';
 import { createPipeline } from './src/pipeline.js';
 import { mountDrawer } from './src/ui.js';
+import { mountFloater } from './src/floater.js';
 import { createViewer, collectChatImages } from './src/gallery.js';
 import { t, setLang } from './src/i18n.js';
 import { compareVersions } from './src/util.js';
@@ -192,6 +193,18 @@ jQuery(async () => {
     drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
     drawerDeps.onAlignChange = v => applyAlign(v);
+    drawer = mountDrawer(drawerDeps);
+    try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
+    addAllButtons();
+    foldAll();
+    LOG(`v${VERSION} loaded (settings ns: ${MODULE})`);
+    checkUpdate();
+    setInterval(checkUpdate, 6 * 60 * 60 * 1000);
+});
+tent').style.display = 'block'); wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+        onCollapseToggle: () => { settings.generate.collapseImages = !settings.generate.collapseImages; save(); document.body.classList.toggle('ifimgen-collapse', settings.generate.collapseImages); if (settings.generate.collapseImages) foldImages(); drawer.refresh(); },
+    });
+    drawerDeps.onFloaterChange = on => floater.setEnabled(on);
     drawer = mountDrawer(drawerDeps);
     try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
     addAllButtons();
