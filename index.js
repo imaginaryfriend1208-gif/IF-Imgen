@@ -11,6 +11,7 @@ import { createBackends } from './src/backends.js';
 import { createLlm } from './src/llm.js';
 import { createPipeline } from './src/pipeline.js';
 import { mountDrawer } from './src/ui.js';
+import { mountFloater } from './src/floater.js';
 import { createViewer, collectChatImages } from './src/gallery.js';
 import { t, setLang } from './src/i18n.js';
 import { compareVersions } from './src/util.js';
@@ -35,6 +36,7 @@ async function saveImage(b64, charName) {
 }
 
 let drawer = null;
+let floater = null;
 const pipeline = createPipeline({ settings, getContext, backends, llm, saveImage, save, log: LOG, onChange: id => { drawer?.refreshGallery(); if (settings.generate.collapseImages && typeof id === 'number' && id >= 0) setTimeout(() => foldImages(id), 50); } });
 const viewer = createViewer({ getContext, pipeline, onChanged: () => drawer?.refreshGallery() });
 
@@ -192,7 +194,16 @@ jQuery(async () => {
     drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
     drawerDeps.onAlignChange = v => applyAlign(v);
+    drawerDeps.onFloaterChange = on => floater?.setEnabled(on);
     drawer = mountDrawer(drawerDeps);
+    // Floating quick-action button + in-chat progress (Generate -> Behaviour toggle). Mounted after the drawer; never allowed to break it.
+    try {
+        floater = mountFloater({
+            settings, save, pipeline, getContext,
+            openDrawer: tab => { drawer?.remount(tab ?? 'settings'); const c = wrap.querySelector('.inline-drawer-content'); if (c) c.style.display = 'block'; wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+            onCollapseToggle: () => { settings.generate.collapseImages = !settings.generate.collapseImages; save(); document.body.classList.toggle('ifimgen-collapse', settings.generate.collapseImages); drawer?.refresh(); },
+        });
+    } catch (e) { console.error('[IF Imgen] floater failed to mount', e); }
     try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); }
     addAllButtons();
     foldAll();

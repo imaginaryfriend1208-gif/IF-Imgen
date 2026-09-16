@@ -223,3 +223,33 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-lightbox-versions img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 2px solid transparent; cursor: pointer; opacity: .7; }
 .ifimgen-lightbox-versions img:hover { opacity: 1; }
 .ifimgen-lightbox-versions img.cur { border-color: var(--SmartThemeQuoteColor, #7aa2f7); opacity: 1; cursor: default; }
+
+/* ---- floating quick-action button + popup + progress ---- */
+.ifimgen-fl { position: fixed; z-index: 3000; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; touch-action: none; }
+.ifimgen-fl.left { align-items: flex-start; }
+.ifimgen-fl-btn { width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeBlurTintColor); color: var(--SmartThemeBodyColor); box-shadow: 0 4px 16px rgba(0,0,0,.35); display: grid; place-items: center; cursor: pointer; position: relative; backdrop-filter: blur(6px); order: 2; padding: 0; }
+.ifimgen-fl-btn svg { width: 24px; height: 24px; }
+.ifimgen-fl-count { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--SmartThemeQuoteColor); color: #fff; font-size: 11px; font-weight: 700; display: none; place-items: center; padding: 0 5px; }
+.ifimgen-fl.running .ifimgen-fl-count { display: grid; }
+.ifimgen-fl.running .ifimgen-fl-btn::before { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 3px solid transparent; border-top-color: var(--SmartThemeQuoteColor); animation: ifimgen-spin 1s linear infinite; }
+.ifimgen-fl-pill { order: 0; max-width: 260px; font-size: 12px; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeBlurTintColor); backdrop-filter: blur(6px); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ifimgen-fl-pop { order: 1; display: none; flex-direction: column; gap: 6px; width: 270px; max-width: calc(100vw - 24px); padding: 10px; border-radius: 12px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeBlurTintColor); backdrop-filter: blur(8px); box-shadow: 0 8px 28px rgba(0,0,0,.4); }
+.ifimgen-fl.open .ifimgen-fl-pop { display: flex; }
+.ifimgen-fl:not(.up) .ifimgen-fl-pop, .ifimgen-fl:not(.up) .ifimgen-fl-pill { order: 3; }
+.ifimgen-fl-head { font-size: 12px; opacity: .7; display: flex; justify-content: space-between; padding: 0 2px 2px; }
+.ifimgen-fl-drag { opacity: .6; }
+.ifimgen-fl-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--SmartThemeBorderColor); background: rgba(255,255,255,.04); color: var(--SmartThemeBodyColor); cursor: pointer; }
+.ifimgen-fl-item:hover { background: rgba(255,255,255,.1); }
+.ifimgen-fl-item.primary { padding: 12px; border-color: var(--SmartThemeQuoteColor); background: color-mix(in srgb, var(--SmartThemeQuoteColor) 22%, transparent); }
+.ifimgen-fl-item.primary .ifimgen-fl-ico svg { width: 24px; height: 24px; }
+.ifimgen-fl-item.primary b { font-size: 15px; }
+.ifimgen-fl-item.cancel { border-color: #c0392b; }
+.ifimgen-fl-ico svg { width: 18px; height: 18px; display: block; }
+.ifimgen-fl-txt { display: flex; flex-direction: column; min-width: 0; }
+.ifimgen-fl-txt small { opacity: .65; font-size: 11px; }
+.ifimgen-fl-row { display: flex; gap: 6px; }
+.ifimgen-fl-row .ifimgen-fl-item { flex: 1; flex-direction: column; gap: 4px; padding: 8px 4px; font-size: 11px; text-align: center; }
+.ifimgen-fl-row .ifimgen-fl-item b { font-weight: 500; }
+.ifimgen-genbar { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 8px; margin: 0 0 6px; border-radius: 6px; border: 1px dashed var(--SmartThemeQuoteColor); background: color-mix(in srgb, var(--SmartThemeQuoteColor) 12%, transparent); }
+.ifimgen-genbar-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--SmartThemeQuoteColor); animation: ifimgen-spin .9s linear infinite; flex: 0 0 12px; }
+@keyframes ifimgen-spin { to { transform: rotate(360deg); } }

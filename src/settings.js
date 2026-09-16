@@ -59,6 +59,8 @@ export function defaultSettings() {
             minParagraphChars: 40,
             showButton: true,
             collapseImages: true,       // chat images sit behind a small toggle button
+            floater: true,              // floating quick-action button + in-chat progress strip
+            floaterPos: null,           // {x,y} remembered after the user drags the button
             imageAlign: 'left',         // 'left' | 'center' | 'right' - where generated images sit in the chat bubble
         },
         // presetOverrides[builtinId] = system prompt saved over a built-in preset (Save = overwrite, no fork needed)
