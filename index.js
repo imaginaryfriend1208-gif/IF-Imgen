@@ -20,6 +20,7 @@ const REPO_URL = 'https://github.com/imaginaryfriend1208-gif/IF-Imgen';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/imaginaryfriend1208-gif/IF-Imgen/main/manifest.json';
 // Direct message: Discord only links profiles by numeric user id (username diuenmii). Opens the profile -> Message.
 const DISCORD_URL = 'https://discord.com/users/1148686772281278585';
+const KOFI_URL = 'https://ko-fi.com/holimo';
 const LOG = (...a) => console.log('[IF Imgen]', ...a);
 
 const settings = ensureSettings(extension_settings);
@@ -221,7 +222,7 @@ jQuery(async () => {
         if (!e.currentTarget.classList.contains('update')) return;
         e.preventDefault(); e.stopPropagation(); window.open(REPO_URL, '_blank', 'noopener');
     });
-    const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, discordUrl: DISCORD_URL };
+    const drawerDeps = { root: wrap.querySelector('#ifimgen_root'), settings, save, backends, llm, pipeline, getContext, viewer, discordUrl: DISCORD_URL, kofiUrl: KOFI_URL };
     drawerDeps.onLanguageChange = tab => { drawer.remount(tab); paintUpdateBadge(); document.querySelectorAll('.ifimgen-fold-btn span').forEach(sp => sp.textContent = t('chat_fold_btn')); floater?.refresh(); };
     drawerDeps.onCollapseChange = on => { if (on) foldImages(); };
     drawerDeps.onAlignChange = v => applyAlign(v);

@@ -59,8 +59,8 @@ export function mountDrawer(deps) {
     };
 }
 
-function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, discordUrl, onLanguageChange, onCollapseChange, onAlignChange, onFloaterChange }, openTab) {
-    root.innerHTML = markup(discordUrl);
+function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, discordUrl, kofiUrl, onLanguageChange, onCollapseChange, onAlignChange, onFloaterChange }, openTab) {
+    root.innerHTML = markup({ discordUrl, kofiUrl });
     const $ = id => root.querySelector(`#${id}`);
     const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; n.className = `ifimgen-status ${cls}`; };
 
@@ -835,12 +835,13 @@ function langSwitch() {
     </div>`;
 }
 
-function markup(discordUrl) {
+function markup({ discordUrl, kofiUrl }) {
     const tabs = MAIN_TABS();
-    // Name + version live in the drawer header (index.js). The inner title row holds the Discord contact and the language switch.
+    // Name + version live in the drawer header (index.js). The inner title row holds Discord contact, Ko-fi support and the language switch.
+    const link = (cls, url, icon, label, title) => url ? `<a class="ifimgen-btn ${cls}" href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${ICONS[icon]}<span>${label}</span></a>` : '';
     return `
     <div class="ifimgen">
-        <div class="ifimgen-title"><a class="ifimgen-btn ifimgen-discord" href="${escapeHtml(discordUrl)}" target="_blank" rel="noopener" title="${escapeHtml(t('btn_discord_title'))}">${ICONS.discord}<span>${t('btn_discord')}</span></a>${langSwitch()}</div>
+        <div class="ifimgen-title">${link('ifimgen-discord', discordUrl, 'discord', t('btn_discord'), t('btn_discord_title'))}${link('ifimgen-kofi', kofiUrl, 'kofi', t('btn_kofi'), t('btn_kofi_title'))}${langSwitch()}</div>
         <div class="ifimgen-tabs">
             ${tabs.map(tab => btn({ icon: tab.icon, label: tab.label, attrs: `data-tab="${tab.tab}"` })).join('')}
         </div>

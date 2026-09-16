@@ -9,6 +9,8 @@
 .ifimgen-title .ifimgen-lang { margin-left: auto; }
 .ifimgen-discord { text-decoration: none; background: #5865F2; color: #fff; border-color: transparent; font-weight: 600; }
 .ifimgen-discord:hover { filter: brightness(1.12); color: #fff; }
+.ifimgen-kofi { text-decoration: none; background: #FF5E5B; color: #fff; border-color: transparent; font-weight: 600; }
+.ifimgen-kofi:hover { filter: brightness(1.12); color: #fff; }
 
 /* ---- drawer header: version pill; turns into a blinking "Update" when GitHub has a newer manifest */
 .ifimgen-hdr-ver {
@@ -213,7 +215,7 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
     .ifimgen-lightbox-bar { width: 100%; gap: 6px; flex: 0 0 auto; padding-bottom: 4px; }
     .ifimgen-lightbox-bar .ifimgen-btn { min-width: 0; flex: 1 1 auto; height: 38px; }
     .ifimgen-lightbox-bar .ifimgen-btn.icon { flex: 0 0 38px; width: 38px; }
-    .ifimgen-title .ifimgen-discord { flex: 1 1 auto; }
+    .ifimgen-title .ifimgen-discord, .ifimgen-title .ifimgen-kofi { flex: 1 1 auto; }
 }
 
 .ifimgen-row .ifimgen-custom { flex: 1; min-width: 0; }
