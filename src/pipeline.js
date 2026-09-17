@@ -1,14 +1,18 @@
-// IF Imgen - per-message pipeline: paragraphs -> planner LLM -> N images -> insert in place.
-// Each image is also recorded in message.extra.ifimgen so it can be regenerated later.
-// Refine mode per reply: planner (1 call) -> scene setting (1 call) -> ONE batch refine for ALL images (1 call).
+// IF Imgen - per-message pipeline:
+//   step 1  scene planner  : paragraphs + context + previous scene documents -> ONE scene document (message.extra.ifimgen_scene)
+//   step 2  translator     : scene document + paragraphs -> N image prompts with $tokens (JSON)
+//   step 3  refine (opt.)  : ONE batch call polishing the N prompts against the document (mode 'refine')
+//   render each prompt -> insert in place. Each image is recorded in message.extra.ifimgen so it can be regenerated later.
+// Regenerate (one image / all images) re-runs step 2 (+3) from the STORED document; "regen scene" / Generate re-run step 1.
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
 import { resolveEntities, rosterText } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
-import { expandScene, buildSettingPrompt, buildRefinePrompt, parseRefined } from './scene.js';
+import { expandScene, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
 import { clamp } from './util.js';
 
-/** @typedef {{ url:string, p:number, scene:string, expanded:string, setting:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord */
+/** @typedef {{ url:string, p:number, scene:string, expanded:string, setting:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord  (setting = the scene document the image was written from) */
+/** @typedef {{ text:string, at:number }} SceneDoc  stored in message.extra.ifimgen_scene */
 /** @typedef {{ url:string, scene:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} TestRecord */
 
 const MAX_TEST_IMAGES = 60;
@@ -69,6 +73,36 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
     const findRecord = (msg, url) => records(msg).find(r => r.url === url) ?? null;
 
+    /** Scene document of a message ('' when none). Falls back to the document stored on its images (older records). */
+    function sceneDocOf(msg) {
+        const d = msg?.extra?.ifimgen_scene;
+        if (d && typeof d.text === 'string' && d.text.trim()) return d.text;
+        return (msg?.extra?.ifimgen ?? []).find(r => r?.setting)?.setting ?? '';
+    }
+    function setSceneDoc(msg, text) {
+        msg.extra ??= {};
+        msg.extra.ifimgen_scene = { text: String(text ?? '').trim(), at: Date.now() };
+    }
+    /** Scene documents of the k most recent earlier character replies that have one, oldest first (continuity input of step 1). */
+    function previousSceneDocs(ctx, messageId, k) {
+        const out = [];
+        for (let i = messageId - 1; i >= 0 && out.length < k; i--) {
+            const m = ctx.chat[i];
+            if (!m || m.is_user || m.is_system) continue;
+            const text = sceneDocOf(m);
+            if (text) out.unshift({ id: i, text });
+        }
+        return out;
+    }
+    /** Refusal / empty-output check shared by the LLM steps. */
+    function llmFailure(reply, what) {
+        const head = String(reply ?? '').replace(/\s+/g, ' ').trim().slice(0, 220);
+        const refused = /(can(?:'|no)t|unable to|not able to|won't|will not|decline|refus|cannot assist|outside what I can)/i.test(reply) && !String(reply).includes('[');
+        return new Error(refused
+            ? `The ${what} LLM refused this reply (${head}…). Use a less strict model / connection profile for IF Imgen, or a SFW preset.`
+            : `The ${what} LLM returned nothing usable. Reply started with: ${head || '(empty)'}`);
+    }
+
     /** @returns {TestRecord[]} live array in extension settings */
     function testList() {
         settings.data ??= {};
@@ -77,21 +111,63 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
-     * Refine step 1: ONE LLM call writes the shared SCENE SETTING of a reply
-     * (location, who is present, what each wears, what they do, poses).
-     * Every image prompt of that reply is later written against this text.
+     * Step 1: ONE LLM call writes the SCENE DOCUMENT of a reply (scene, location, layout, who is present, what each
+     * wears / feels / does, poses, continuity with the previous documents). Stored on the message; every image prompt
+     * of the reply is translated from it and the next reply's planner reads it again.
      */
-    async function buildSetting(ctx, { paragraphs, context, ents }, signal) {
-        const msgs = buildSettingPrompt({ system: settings.generate.settingSystem, paragraphs, context, characters: ents.characters, personas: ents.personas });
-        const setting = (await llm.chat({ ...msgs, signal })).trim();
-        if (!setting) throw new Error('Scene-setting LLM returned an empty setting.');
-        return setting;
+    async function writeSceneDoc(ctx, messageId, { paragraphs, context }, signal) {
+        const g = settings.generate;
+        const ident = chatIdentity(ctx);
+        const ents = resolveEntities(settings, { text: paragraphs.map(p => p.text).join('\n'), ...ident });
+        const msgs = buildScenePrompt({
+            system: g.sceneSystem, paragraphs, context,
+            previous: previousSceneDocs(ctx, messageId, clamp(g.sceneHistory ?? 3, 0, 10)),
+            characters: ents.characters, personas: ents.personas,
+        });
+        const reply = await llm.chat({ ...msgs, signal });
+        const doc = String(reply ?? '').trim();
+        if (!doc || doc.length < 40) throw llmFailure(reply, 'scene planner');
+        return doc;
     }
 
     /**
-     * Compile N planner scenes of ONE message -> N final prompts.
+     * Scene document for message `messageId`: the stored one, or a fresh one (written from the message text and
+     * stored) when none exists yet or `fresh` is set. Returns '' when the message has no usable paragraphs.
+     */
+    async function sceneDocFor(ctx, messageId, { fresh = false, paragraphs = null, signal, status }) {
+        const msg = ctx.chat[messageId];
+        if (!fresh) { const stored = sceneDocOf(msg); if (stored) return stored; }
+        const paras = paragraphs ?? splitParagraphs(stripImages(msg?.mes ?? ''), settings.generate.minParagraphChars);
+        if (!paras.length) return '';
+        status('writing scene document…');
+        const doc = await writeSceneDoc(ctx, messageId, { paragraphs: paras, context: contextText(ctx, messageId, settings.generate.contextMessages) }, signal);
+        setSceneDoc(msg, doc);
+        log(`#${messageId} scene document`, doc);
+        return doc;
+    }
+
+    /**
+     * Step 2: translate the scene document (+ the numbered paragraphs) into image prompts with $tokens.
+     * `fixed` = write one prompt for every listed paragraph (regenerate keeps every image slot).
+     * @returns {Promise<{p:number, prompt:string}[]>}
+     */
+    async function planShots(ctx, { paragraphs, count, sceneDoc, presetId, fixed = false, context = '' }, signal) {
+        const g = settings.generate;
+        const preset = findPreset(settings, presetId ?? g.presetId);
+        const { system, user } = renderPlannerPrompt(preset, {
+            paragraphs, count, dialect: g.dialect, sceneDoc, fixed, context,
+            roster: rosterText(settings, chatIdentity(ctx)),
+        });
+        const reply = await llm.chat({ system, user, signal });
+        const plan = parsePlan(reply, paragraphs.map(p => p.index)).slice(0, count);
+        if (!plan.length) throw llmFailure(reply, 'prompt translator');
+        return plan;
+    }
+
+    /**
+     * Compile N translated prompts of ONE message -> N final prompts.
      * mode 'plan'   : tokens ($yenka, $yenka.back) expanded verbatim, cast fragments prepended by compiler. No LLM.
-     * mode 'refine' : ONE batch LLM call for all scenes (setting + cast + N drafts -> N prompts), never one call per image,
+     * mode 'refine' : ONE batch LLM call for all prompts (document + cast + N drafts -> N prompts), never one call per image,
      *                 so location / people / clothing stay identical across the images of a reply.
      * @returns {Promise<{ prompt:string, negative:string, ents:object, expanded:string, refined:string, unknown:string[] }[]>}
      */
@@ -122,7 +198,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     /**
      * Preview helper: compile the SAME scene both ways regardless of the active mode.
-     * plan = no LLM; refine = one LLM call, no setting step (errors are returned, not thrown).
+     * plan = no LLM; refine = one LLM call, no scene document (errors are returned, not thrown).
      */
     async function compileBoth(scene, signal) {
         const ctx = getContext();
@@ -165,24 +241,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     const logCompiled = (c, label = '') => log(`compiled${label} [chars: ${c.ents.characters.map(e => e.name).join(',') || '-'} | personas: ${c.ents.personas.map(e => e.name).join(',') || '-'} | style: ${c.ents.style?.name ?? '-'}]`, c.prompt);
 
-    /**
-     * Scene setting for a regenerate on message `messageId`: the one stored on its records, or (refine mode)
-     * a fresh one written from the message text so old images / edited scenes still get continuity.
-     */
-    async function settingFor(ctx, messageId, stored, signal, status) {
-        if (stored || settings.generate.mode !== 'refine') return stored || '';
-        const msg = ctx.chat[messageId];
-        const paragraphs = splitParagraphs(stripImages(msg?.mes ?? ''), settings.generate.minParagraphChars);
-        if (!paragraphs.length) return '';
-        status('writing scene setting…');
-        const scenes = records(msg).map(r => r.scene).filter(Boolean).join('\n');
-        const ents = resolveEntities(settings, { text: scenes, ...chatIdentity(ctx) });
-        const setting = await buildSetting(ctx, { paragraphs, context: contextText(ctx, messageId, settings.generate.contextMessages), ents }, signal);
-        log('scene setting (regen)', setting);
-        return setting;
-    }
-
-    /** Compile + render ONE scene (single regenerate). `setting` = scene setting of the message, reused for continuity. */
+    /** Compile + render ONE prompt (single regenerate). `setting` = scene document of the message. */
     async function render(ctx, { scene, p, setting = '' }, signal, status) {
         const backend = backends.active();
         if (settings.generate.mode === 'refine') status('refining prompt…');
@@ -192,8 +251,10 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
+     * Full run: scene document (step 1, new unless `keepScene` and one is stored) -> choose paragraphs + prompts (step 2)
+     * -> optional refine -> render -> insert.
      * @param {number} messageId
-     * @param {{ count?: number, presetId?: string, force?: boolean, onStatus?: (s:string)=>void }} [opt]
+     * @param {{ count?: number, presetId?: string, force?: boolean, keepScene?: boolean, onStatus?: (s:string)=>void }} [opt]
      */
     async function run(messageId, opt = {}) {
         const ctx = getContext();
@@ -225,37 +286,25 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const controller = new AbortController();
         begin(messageId, controller);
         const status = s => { log(`#${messageId} ${s}`); note(s); opt.onStatus?.(s); };
-        const ident = chatIdentity(ctx);
         const originalText = msg.mes;
         try {
-            status('planning…');
-            const preset = findPreset(settings, opt.presetId ?? g.presetId);
+            // Step 1: scene document (stored on the message, re-read by the next reply's planner).
             const context = contextText(ctx, messageId, g.contextMessages);
-            const { system, user } = renderPlannerPrompt(preset, {
-                paragraphs, count, dialect: g.dialect,
-                roster: rosterText(settings, ident),
-                context,
-            });
-            const reply = await llm.chat({ system, user, signal: controller.signal });
-            const plan = parsePlan(reply, paragraphs.map(p => p.index)).slice(0, count);
-            if (!plan.length) {
-                const head = reply.replace(/\s+/g, ' ').trim().slice(0, 220);
-                const refused = /(can(?:'|no)t|unable to|not able to|won't|will not|decline|refus|cannot assist|outside what I can)/i.test(reply) && !reply.includes('[');
-                throw new Error(refused
-                    ? `The planner LLM refused this reply (${head}…). Use a less strict model / connection profile for IF Imgen, or a SFW planner preset.`
-                    : `Planner returned no usable JSON plan. Reply started with: ${head || '(empty)'}`);
+            const stored = opt.keepScene ? sceneDocOf(msg) : '';
+            let setting = stored;
+            if (!setting) {
+                status('writing scene document…');
+                setting = await writeSceneDoc(ctx, messageId, { paragraphs, context }, controller.signal);
+                log(`#${messageId} scene document`, setting);
             }
+
+            // Step 2: translate the document into N prompts (the translator also picks the paragraphs).
+            status('writing prompts…');
+            const plan = await planShots(ctx, { paragraphs, count, sceneDoc: setting, presetId: opt.presetId, context }, controller.signal);
             log('plan', plan);
 
-            // Refine mode: ONE scene-setting call + ONE batch refine call for ALL images of this reply.
-            let setting = '';
-            if (g.mode === 'refine') {
-                status('writing scene setting…');
-                const ents = resolveEntities(settings, { text: plan.map(x => x.prompt).join('\n'), ...ident });
-                setting = await buildSetting(ctx, { paragraphs, context, ents }, controller.signal);
-                log('scene setting', setting);
-                status(`refining ${plan.length} prompt${plan.length > 1 ? 's' : ''} in one call…`);
-            }
+            // Step 3 (mode 'refine'): ONE batch refine call for ALL images of this reply.
+            if (g.mode === 'refine') status(`refining ${plan.length} prompt${plan.length > 1 ? 's' : ''} in one call…`);
             const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting });
             compiled.forEach((c, i) => logCompiled(c, ` #${i + 1}`));
 
@@ -267,6 +316,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
             // Stale check: the message may have been swiped/edited while generating.
             if (ctx.chat[messageId]?.mes !== originalText) return { skipped: 'message changed during generation', generated: made.length };
+            if (!stored) setSceneDoc(msg, setting);
             if (replacing) records(msg).length = 0;
             records(msg).push(...made);
             setMessageText(ctx, messageId, insertAfterParagraphs(baseText, paragraphs, made.map(r => ({ p: r.p, snippet: imageSnippet(r.url) }))));
@@ -283,10 +333,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
-     * Re-render one image in place. `scene` overrides the stored planner scene;
-     * entities/style/settings are re-applied at compile time, so edits to
-     * characters or styles take effect without touching the chat by hand.
-     * The stored scene setting of the image is reused so the regen keeps continuity.
+     * Re-render one image in place = step 2 (+3) again for that paragraph from the STORED scene document
+     * (a new translation of the same scene), never step 1. `scene` (Edit & regenerate) skips the translation and
+     * is used as the prompt draft as-is; entities / style / settings are re-applied at compile time either way.
      */
     async function regenerate(messageId, url, { scene, onStatus } = {}) {
         const ctx = getContext();
@@ -294,13 +343,22 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         if (!msg) throw new Error('Message not found.');
         if (inflight.has(messageId)) throw new Error('This message is already generating.');
         const rec = findRecord(msg, url);
-        const useScene = String(scene ?? rec?.scene ?? '').trim();
-        if (!useScene) throw new Error('No stored prompt for this image — use "Edit & regenerate" and type one.');
+        const edited = String(scene ?? '').trim();
+        const paragraphs = splitParagraphs(stripImages(msg.mes), settings.generate.minParagraphChars);
+        const para = paragraphs.find(p => p.index === (rec?.p ?? 0)) ?? null;
+        if (!edited && !para && !String(rec?.scene ?? '').trim()) throw new Error('No stored prompt for this image — use "Edit & regenerate" and type one.');
         const controller = new AbortController();
         begin(messageId, controller);
         const status = s => { log(`#${messageId} regen ${s}`); note(s); onStatus?.(s); };
         try {
-            const setting = await settingFor(ctx, messageId, rec?.setting ?? '', controller.signal, status);
+            const setting = await sceneDocFor(ctx, messageId, { paragraphs, signal: controller.signal, status });
+            let useScene = edited;
+            if (!useScene && para && setting) {
+                status('writing prompt…');
+                try { useScene = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true }, controller.signal))[0]?.prompt ?? ''; }
+                catch (e) { if (e?.name === 'AbortError') throw e; log('regen: translation failed, reusing the stored prompt', e.message); }
+            }
+            useScene ||= String(rec?.scene ?? '').trim();
             const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting }, controller.signal, status);
             if (rec) fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
             const list = records(msg);
@@ -320,12 +378,14 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
-     * Re-render EVERY image of a message with its stored scene and position
-     * (no new planning). All scenes are compiled in ONE batch (refine = one LLM call)
-     * against the stored scene setting. Images without a stored scene (legacy) are skipped.
+     * Re-render EVERY image of a message in its slot: step 2 (+3) again for the same paragraphs from the scene
+     * document (stored, or written anew when `newScene` is set = "regen scene"). Prompts are translated in ONE call
+     * and compiled in ONE batch. Images whose paragraph is gone and that have no stored prompt (legacy) are skipped.
+     * @param {number} messageId
+     * @param {{ newScene?: boolean, onStatus?: (s:string)=>void }} [opt]
      * @returns {Promise<{ regenerated:number, skipped:number }>}
      */
-    async function regenerateAll(messageId, { onStatus } = {}) {
+    async function regenerateAll(messageId, { newScene = false, onStatus } = {}) {
         const ctx = getContext();
         const msg = ctx.chat[messageId];
         if (!msg) throw new Error('Message not found.');
@@ -334,20 +394,33 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         if (!list.length) return { regenerated: 0, skipped: 0, none: true };
         const controller = new AbortController();
         begin(messageId, controller);
-        const status = s => { log(`#${messageId} regen-all ${s}`); note(s); onStatus?.(s); };
-        const todo = list.filter(r => String(r.scene ?? '').trim());
+        const status = s => { log(`#${messageId} ${newScene ? 'regen-scene' : 'regen-all'} ${s}`); note(s); onStatus?.(s); };
+        const paragraphs = splitParagraphs(stripImages(msg.mes), settings.generate.minParagraphChars);
+        const paraOf = r => paragraphs.find(p => p.index === (r.p ?? 0)) ?? null;
+        const todo = list.filter(r => paraOf(r) || String(r.scene ?? '').trim());
         let regenerated = 0;
         const skipped = list.length - todo.length;
         try {
             if (!todo.length) { status('done (0)'); return { regenerated, skipped }; }
-            const setting = await settingFor(ctx, messageId, todo.find(r => r.setting)?.setting ?? '', controller.signal, status);
+            const setting = await sceneDocFor(ctx, messageId, { fresh: newScene, paragraphs, signal: controller.signal, status });
+            // Step 2 for every slot that still has its paragraph; slots without one keep their stored prompt.
+            const prompts = todo.map(r => String(r.scene ?? '').trim());
+            const slots = todo.map((r, i) => ({ i, para: paraOf(r) })).filter(x => x.para);
+            if (slots.length && setting) {
+                status(`writing ${slots.length} prompt${slots.length > 1 ? 's' : ''}…`);
+                try {
+                    const plan = await planShots(ctx, { paragraphs: slots.map(x => x.para), count: slots.length, sceneDoc: setting, fixed: true }, controller.signal);
+                    for (const x of slots) { const hit = plan.find(y => y.p === x.para.index); if (hit) prompts[x.i] = hit.prompt; }
+                } catch (e) { if (e?.name === 'AbortError') throw e; log('regen-all: translation failed, reusing the stored prompts', e.message); }
+            }
+            if (prompts.some(p => !p)) throw new Error('No prompt for one of the images — use "Edit & regenerate" on it.');
             if (settings.generate.mode === 'refine') status(`refining ${todo.length} prompt${todo.length > 1 ? 's' : ''} in one call…`);
-            const compiled = await compileScenes(ctx, todo.map(r => r.scene), backends.active().id, controller.signal, { setting });
+            const compiled = await compileScenes(ctx, prompts, backends.active().id, controller.signal, { setting });
             for (let i = 0; i < todo.length; i++) {
-                const rec = todo[i];
+                const rec = { ...todo[i], scene: prompts[i] };
                 status(`image ${i + 1}/${todo.length}…`);
                 const fresh = await renderCompiled(ctx, { scene: rec.scene, p: rec.p ?? 0, setting }, compiled[i], controller.signal, status);
-                fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
+                fresh.history = [stripHistory(todo[i]), ...(todo[i].history ?? [])].slice(0, MAX_VERSIONS);
                 const all = records(msg);
                 const j = all.findIndex(r => r.url === rec.url);
                 if (j >= 0) all[j] = fresh; else all.push(fresh);
@@ -408,11 +481,14 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         return list[i];
     }
 
+    /** "Regen scene": step 1 again (new scene document), then every image of the message is re-translated and redrawn. */
+    const regenerateScene = (messageId, opt = {}) => regenerateAll(messageId, { ...opt, newScene: true });
+
     async function clear(messageId) {
         const ctx = getContext();
         const msg = ctx.chat[messageId];
         if (!msg) return;
-        if (msg.extra) msg.extra.ifimgen = [];
+        if (msg.extra) { msg.extra.ifimgen = []; delete msg.extra.ifimgen_scene; }
         setMessageText(ctx, messageId, stripImages(msg.mes));
         await ctx.saveChat();
     }
@@ -486,8 +562,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     return {
-        run, regenerate, regenerateAll, removeImage, switchVersion, clear, migrateChat,
+        run, regenerate, regenerateAll, regenerateScene, removeImage, switchVersion, clear, migrateChat,
         runTest, regenerateTest, removeTest, testImages: () => testList().slice(),
+        sceneDoc: messageId => sceneDocOf(getContext().chat[messageId]),
         cancel(messageId) {
             if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }
             inflight.get(messageId)?.abort();

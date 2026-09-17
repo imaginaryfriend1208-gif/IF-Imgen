@@ -9,7 +9,7 @@ import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
-import { parseFacets, facetsText, expandScene, buildRefinePrompt, buildSettingPrompt, parseRefined, rosterLine } from '../src/scene.js';
+import { parseFacets, facetsText, expandScene, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM } from '../src/scene.js';
 import { rosterText, isBound } from '../src/entities.js';
 import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
 
@@ -65,11 +65,23 @@ test('parsePlan: tolerant JSON, drops invalid/duplicate paragraphs, sorted', () 
 });
 
 test('renderPlannerPrompt fills placeholders', () => {
-    const { system, user } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 2, roster: '$a — character: A', context: '', dialect: 'natural' });
+    const { system, user } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 2, roster: '$a — character: A', context: 'earlier', dialect: 'natural' });
     assert.ok(system.includes('exactly 2 objects'));
     assert.ok(system.includes('natural-language'));
     assert.ok(!system.includes('{{'));
-    assert.ok(user.includes('[1] x') && user.includes('ROSTER'));
+    assert.ok(user.includes('[1] x') && user.includes('ROSTER') && user.includes('EARLIER CONTEXT'));
+    assert.ok(user.includes('Choose 2 paragraph(s)'));
+});
+
+test('step 2 (translate): scene document is authoritative and replaces the raw context; fixed = one prompt per listed paragraph', () => {
+    const doc = 'SCENE: quiet evening\nLOCATION: indoors, bedroom, night';
+    const { system, user } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 2, text: 'y' }, { index: 5, text: 'z' }], count: 2, roster: '', context: 'earlier', dialect: 'tags', sceneDoc: doc, fixed: true });
+    assert.ok(system.includes('SCENE DOCUMENT') && system.includes('TRANSLATE'), 'rules explain the translation step');
+    assert.ok(user.includes('SCENE DOCUMENT (authoritative') && user.includes(doc));
+    assert.ok(!user.includes('EARLIER CONTEXT'), 'document supersedes the raw context');
+    assert.ok(user.indexOf('SCENE DOCUMENT') < user.indexOf('LATEST REPLY'));
+    assert.ok(user.includes('one prompt for EACH of the 2 paragraph(s)') && !user.includes('Choose 2'), 'fixed keeps every image slot');
+    assert.ok(system.includes('colour'), 'tag dialect asks for garment colours + state');
 });
 
 const s = defaultSettings();
@@ -229,12 +241,12 @@ test('refine prompt: cast carries base look + only referenced details; style + e
     assert.ok(system.includes('exactly 1 objects'), '{{count}} filled');
 });
 
-test('batch refine: ONE call carries the scene setting + all shots; facets of every shot listed once; parseRefined maps by index', () => {
+test('batch refine: ONE call carries the scene document + all shots; facets of every shot listed once; parseRefined maps by index', () => {
     const s1 = expandScene({ scene: '$yenka walks away showing $yenka.back', characters: [rosario], personas: [yenka] });
     const s2 = expandScene({ scene: '$rosario shows $rosario.front to $yenka', characters: [rosario], personas: [yenka] });
     const { system, user } = buildRefinePrompt({ system: '', dialect: 'tags', setting: 'LOCATION: rainy street', shots: [{ expanded: s1.text, used: s1.used }, { expanded: s2.text, used: s2.used }], characters: [rosario], personas: [yenka], style: null });
     assert.ok(system.includes('exactly 2 objects') && system.includes('danbooru'));
-    assert.ok(user.indexOf('SCENE SETTING') < user.indexOf('CAST:') && user.includes('LOCATION: rainy street'));
+    assert.ok(user.indexOf('SCENE DOCUMENT') < user.indexOf('CAST:') && user.includes('LOCATION: rainy street'));
     assert.ok(user.includes('[1] ' + s1.text) && user.includes('[2] ' + s2.text));
     assert.ok(user.includes('- back: a big tattoo') && user.includes('- front: scar') && (user.match(/- back:/g) || []).length === 1);
     assert.deepEqual(parseRefined('ok\n[{"i":2,"prompt":"\\"B\\""},{"i":1,"prompt":"A"}]', 2), ['A', 'B']);
@@ -242,17 +254,33 @@ test('batch refine: ONE call carries the scene setting + all shots; facets of ev
     assert.deepEqual(parseRefined('[{"prompt":"only"}]', 2), ['only', ''], 'missing slot stays empty');
     assert.deepEqual(parseRefined('plain text prompt', 1), ['plain text prompt'], 'single shot tolerates plain text');
     assert.deepEqual(parseRefined('garbage', 2), ['', '']);
-    const st = buildSettingPrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka] });
-    assert.ok(st.system.includes('WEARING') && st.system.includes('PEOPLE PRESENT'));
-    assert.ok(st.user.includes('outfit: white button-up shirt') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
-    assert.equal(defaultSettings().generate.settingSystem, st.system);
-    assert.ok(system.includes('SETTING wins'), 'refine: setting overrides drafts / cast details');
-    assert.ok(st.system.includes('WHOLE reply'), 'setting: one wardrobe per person for the whole reply');
+    assert.ok(system.includes('DOCUMENT wins'), 'refine: document overrides drafts / cast details');
+    assert.ok(system.includes('keep the content of the draft'), 'refine polishes, never rewrites the content');
     // stale (pre-batch) refine system stored in settings -> replaced by the batch default on load
     const stale = { IF_Imgen: { ...defaultSettings(), generate: { ...defaultSettings().generate, refineSystem: 'You write prompts... Merge them into ONE final image prompt.' } } };
     assert.equal(ensureSettings(stale).generate.refineSystem, defaultSettings().generate.refineSystem);
     const custom = { IF_Imgen: { ...defaultSettings(), generate: { ...defaultSettings().generate, refineSystem: 'mine {{count}} {{dialect_rule}}' } } };
     assert.equal(ensureSettings(custom).generate.refineSystem, 'mine {{count}} {{dialect_rule}}', 'a custom batch-aware system is kept');
+});
+
+test('step 1 (scene document): sections, cast details, previous documents (oldest first) and context; settings v2 -> v3 migration', () => {
+    const st = buildScenePrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka], previous: [{ id: 3, text: 'DOC A' }, { id: 7, text: 'DOC B' }] });
+    for (const k of ['SCENE:', 'LOCATION:', 'LAYOUT:', 'PEOPLE PRESENT:', 'WEARING:', 'EXPRESSION:', 'DOING:', 'POSE / POSITION:', 'CONTINUITY:']) assert.ok(st.system.includes(k), `section ${k}`);
+    assert.ok(st.system.includes('colour') && st.system.includes('WHERE it is'), 'clothing colours + prop placement demanded');
+    assert.ok(st.user.includes('outfit: white button-up shirt') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
+    assert.ok(st.user.indexOf('DOC A') < st.user.indexOf('DOC B') && st.user.includes('document 2 of 2 (most recent)'), 'previous documents oldest first, latest marked');
+    assert.ok(st.user.indexOf('PREVIOUS SCENE DOCUMENTS') < st.user.indexOf('LATEST REPLY'));
+    assert.ok(buildScenePrompt({ paragraphs: [], characters: [], personas: [] }).user.includes('(none - this is the first illustrated reply)'));
+    assert.equal(defaultSettings().generate.sceneSystem, DEFAULT_SCENE_SYSTEM);
+    assert.equal(defaultSettings().generate.sceneHistory, 3);
+    // v2 install: old scene-setting prompt dropped, refine system written against "SCENE SETTING" replaced, custom one kept
+    const v2 = { IF_Imgen: { version: 2, generate: { settingSystem: 'old setting prompt', refineSystem: 'x SCENE SETTING y {{count}}' } } };
+    const m = ensureSettings(v2);
+    assert.equal(m.version, SETTINGS_VERSION); assert.equal(m.generate.settingSystem, undefined);
+    assert.equal(m.generate.refineSystem, defaultSettings().generate.refineSystem, 'v2 refine prompt (SCENE SETTING contract) replaced');
+    assert.equal(m.generate.sceneSystem, DEFAULT_SCENE_SYSTEM, 'new step-1 prompt filled in');
+    const keep = ensureSettings({ IF_Imgen: { version: 2, generate: { refineSystem: 'mine {{count}}' } } });
+    assert.equal(keep.generate.refineSystem, 'mine {{count}}');
 });
 
 test('compilePrompt merged=true: cast fragments not prepended (refine already merged them), LoRA/negative/style still applied', () => {

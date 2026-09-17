@@ -145,6 +145,12 @@ body.ifimgen-align-right .ifimgen-fold { text-align: right; }
 .ifimgen-lightbox-cap { text-align: left; line-height: 1.35; }
 .ifimgen-lightbox-cap > div { margin-top: 4px; }
 .ifimgen-cap-k { display: inline-block; font-size: .75em; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin-right: 6px; border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 4px; }
+/* scene document of the message (step 1): folded to its first line, click to read the whole text */
+.ifimgen-cap-doc { margin-top: 4px; }
+.ifimgen-cap-doc summary { cursor: pointer; list-style: none; opacity: .85; }
+.ifimgen-cap-doc summary::-webkit-details-marker { display: none; }
+.ifimgen-cap-doc[open] summary { opacity: 1; }
+.ifimgen-cap-doc pre { white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; margin: 4px 0 0; padding: 6px 8px; max-height: 30vh; overflow: auto; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; text-align: left; }
 .ifimgen-lightbox-status { min-height: 1.2em; color: #ccc; }
 .ifimgen-lightbox-bar { flex-wrap: wrap; justify-content: center; }
 .mes_text img[alt="IF Imgen"] { cursor: zoom-in; }
@@ -270,7 +276,8 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-fl-act.danger { border-color: #c0392b; }
 /* rows: regen + gen side by side (icon on top, label + hint under it); mini row = gallery / collapse / settings, small icon + short label */
 .ifimgen-fl-row { display: flex; gap: 6px; }
-.ifimgen-fl-row .ifimgen-fl-act { flex: 1 1 0; flex-direction: row; justify-content: center; gap: 6px; padding: 7px 6px; text-align: center; }
+.ifimgen-fl-row .ifimgen-fl-act { flex: 1 1 0; flex-direction: row; justify-content: center; gap: 6px; padding: 7px 6px; text-align: center; min-width: 0; }
+.ifimgen-fl-row .ifimgen-fl-act b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ifimgen-fl-row .ifimgen-fl-act b { font-size: 12px; }
 .ifimgen-fl-row-mini .ifimgen-fl-act { flex-direction: row; justify-content: center; gap: 5px; padding: 5px 4px; }
 .ifimgen-fl-row-mini .ifimgen-fl-act .ifimgen-ico { width: 12px; height: 12px; flex-basis: 12px; }

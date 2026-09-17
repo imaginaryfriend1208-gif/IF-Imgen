@@ -7,7 +7,7 @@ import { workflowInfo, autoMapWorkflow } from './comfy.js';
 import { modelParams, hasProfile } from './prompt.js';
 import { ICONS, btn, fileBtn } from './icons.js';
 import { mountGallery, galleryMarkup } from './gallery.js';
-import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SETTING_SYSTEM } from './scene.js';
+import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 import { t, setLang, getLang, LANGS, FLAGS } from './i18n.js';
 
 // Labels are resolved at render time (t()) so the language switch re-renders everything.
@@ -291,11 +291,12 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_align', () => g.imageAlign, v => { g.imageAlign = v; onAlignChange?.(v); });
     bind('ifimgen_count', () => g.imagesPerResponse, v => g.imagesPerResponse = v);
     bind('ifimgen_ctx', () => g.contextMessages, v => g.contextMessages = v);
+    bind('ifimgen_scene_hist', () => g.sceneHistory, v => g.sceneHistory = v);
     bind('ifimgen_dialect', () => g.dialect, v => g.dialect = v);
     const showMode = () => root.querySelectorAll('[data-mode]').forEach(b => b.style.display = b.dataset.mode === g.mode ? '' : 'none');
     bind('ifimgen_mode', () => g.mode, v => { g.mode = v; showMode(); });
-    bind('ifimgen_setting_system', () => g.settingSystem, v => g.settingSystem = v);
-    $('ifimgen_setting_reset').addEventListener('click', () => { g.settingSystem = DEFAULT_SETTING_SYSTEM; $('ifimgen_setting_system').value = g.settingSystem; save(); });
+    bind('ifimgen_scene_system', () => g.sceneSystem, v => g.sceneSystem = v);
+    $('ifimgen_scene_reset').addEventListener('click', () => { g.sceneSystem = DEFAULT_SCENE_SYSTEM; $('ifimgen_scene_system').value = g.sceneSystem; save(); });
     bind('ifimgen_refine_system', () => g.refineSystem, v => g.refineSystem = v);
     $('ifimgen_refine_reset').addEventListener('click', () => { g.refineSystem = DEFAULT_REFINE_SYSTEM; $('ifimgen_refine_system').value = g.refineSystem; save(); });
     showMode();
@@ -434,15 +435,17 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         try { const r = await pipeline.run(id, { force: true, onStatus: s => status('ifimgen_gen_status', s) }); if (r.skipped) status('ifimgen_gen_status', `${t('st_skipped')}: ${r.skipped}`, 'error'); }
         catch (e) { status('ifimgen_gen_status', e.message, 'error'); }
     });
-    $('ifimgen_regen_last').addEventListener('click', async () => {
+    const regenLast = async (newScene) => {
         const id = lastCharMessage();
         if (id < 0) return status('ifimgen_gen_status', t('st_no_char_msg'), 'error');
         try {
-            const r = await pipeline.regenerateAll(id, { onStatus: s => status('ifimgen_gen_status', `${t('st_regen')} ${s}`) });
+            const r = await pipeline.regenerateAll(id, { newScene, onStatus: s => status('ifimgen_gen_status', `${t('st_regen')} ${s}`) });
             if (r.none) return status('ifimgen_gen_status', t('st_no_images'), 'error');
-            status('ifimgen_gen_status', `${t('st_done')} ${r.regenerated}${r.skipped ? ` (+${r.skipped} skipped: no stored scene)` : ''}`, 'ok');
+            status('ifimgen_gen_status', `${t('st_done')} ${r.regenerated}${r.skipped ? ` (+${r.skipped} ${t('st_skipped_no_scene')})` : ''}`, 'ok');
         } catch (e) { status('ifimgen_gen_status', e.message, 'error'); }
-    });
+    };
+    $('ifimgen_regen_last').addEventListener('click', () => regenLast(false));
+    $('ifimgen_regen_scene_last').addEventListener('click', () => regenLast(true));
 
     // ---- job strip: reflects every image job (auto, per-message button, slash, regen, tests); Cancel aborts them all.
     const jobsEl = $('ifimgen_jobs');
@@ -738,22 +741,23 @@ function generatePanel() {
             <div class="ifimgen-row"><label for="ifimgen_align">${t('lbl_align')}</label><select id="ifimgen_align" class="text_pole"><option value="left">${t('opt_align_left')}</option><option value="center">${t('opt_align_center')}</option><option value="right">${t('opt_align_right')}</option></select></div>
             <div class="ifimgen-grid2">
                 ${numRow('ifimgen_count', t('lbl_count'), 1, 8)}${numRow('ifimgen_ctx', t('lbl_ctx'), 0, 20)}
-                ${numRow('ifimgen_minchars', t('lbl_minchars'), 0, 500)}
+                ${numRow('ifimgen_scene_hist', t('lbl_scene_hist'), 0, 10)}${numRow('ifimgen_minchars', t('lbl_minchars'), 0, 500)}
                 <div class="ifimgen-row"><label for="ifimgen_dialect">${t('lbl_dialect')}</label><select id="ifimgen_dialect" class="text_pole"><option value="tags">${t('opt_tags')}</option><option value="natural">${t('opt_natural')}</option></select></div>
             </div>
             <div class="ifimgen-note">${t('note_behaviour')}</div>
         </div>
         <div class="ifimgen-box">
             ${boxTitle('brain', t('box_calls'))}
+            <div class="ifimgen-note">${t('note_pipeline')}</div>
             <div class="ifimgen-row"><label for="ifimgen_mode">${t('lbl_mode')}</label>
                 <select id="ifimgen_mode" class="text_pole">
                     <option value="plan">${t('opt_mode_plan')}</option>
                     <option value="refine">${t('opt_mode_refine')}</option>
                 </select></div>
+            <div class="ifimgen-row"><label>${t('lbl_scene_system')}</label>${btn({ id: 'ifimgen_scene_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
+            <textarea id="ifimgen_scene_system" class="text_pole" rows="7"></textarea>
+            <div class="ifimgen-note">${t('note_scene')}</div>
             <div data-mode="refine" style="display:none">
-                <div class="ifimgen-row"><label>${t('lbl_setting_system')}</label>${btn({ id: 'ifimgen_setting_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
-                <textarea id="ifimgen_setting_system" class="text_pole" rows="7"></textarea>
-                <div class="ifimgen-note">${t('note_setting')}</div>
                 <div class="ifimgen-row"><label>${t('lbl_refine_system')}</label>${btn({ id: 'ifimgen_refine_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
                 <textarea id="ifimgen_refine_system" class="text_pole" rows="7"></textarea>
                 <div class="ifimgen-note">${t('note_refine')}</div>
@@ -804,6 +808,7 @@ function generatePanel() {
         <div class="ifimgen-row">
             ${btn({ id: 'ifimgen_run_last', cls: 'primary', icon: 'play', label: t('btn_run_last') })}
             ${btn({ id: 'ifimgen_regen_last', icon: 'refresh', label: t('btn_regen_last'), title: t('tip_regen_last') })}
+            ${btn({ id: 'ifimgen_regen_scene_last', icon: 'brain', label: t('btn_regen_scene_last'), title: t('tip_regen_scene_last') })}
             <span id="ifimgen_gen_status" class="ifimgen-status"></span>
         </div>
         <div id="ifimgen_jobs" class="ifimgen-jobs">

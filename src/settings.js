@@ -1,9 +1,9 @@
 // IF Imgen - settings schema. Everything lives in extension_settings.IF_Imgen.
 import { BUILTIN_PRESETS } from './presets.js';
-import { DEFAULT_REFINE_SYSTEM, DEFAULT_SETTING_SYSTEM } from './scene.js';
+import { DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 
 export const MODULE = 'IF_Imgen';
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 /** Per-model generation parameters (one profile per model, per backend). */
 export const PARAM_KEYS = ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height'];
@@ -45,11 +45,13 @@ export function defaultSettings() {
         generate: {
             auto: true,                 // run on every character reply
             imagesPerResponse: 1,       // N
-            contextMessages: 4,         // K previous messages given to planner
+            contextMessages: 4,         // K previous messages given to the scene planner
+            sceneHistory: 3,            // scene documents of earlier replies handed to the scene planner (continuity)
             presetId: BUILTIN_PRESETS[0].id,
             dialect: 'tags',            // 'tags' | 'natural'
-            mode: 'plan',               // 'plan' = 1 LLM call (tokens expanded verbatim) | 'refine' = 3 calls per reply (planner + scene setting + ONE batch refine for all images)
-            settingSystem: DEFAULT_SETTING_SYSTEM,
+            // Calls per reply: 'plan' = 2 (scene document + translate to prompts) | 'refine' = 3 (+ ONE batch refine for all images)
+            mode: 'plan',
+            sceneSystem: DEFAULT_SCENE_SYSTEM,
             refineSystem: DEFAULT_REFINE_SYSTEM,
             useQualityPrefix: true,
             qualityPrefix: 'masterpiece, best quality, amazing quality',
@@ -104,10 +106,17 @@ export function migrate(s) {
         if (s.connection.profiles?.comfy) { s.connection.profiles.sd = { ...s.connection.profiles.comfy, ...s.connection.profiles.sd }; delete s.connection.profiles.comfy; }
         delete s.connection.comfy;
     }
-    // Batch refine (v0.10) needs {{count}} and the SCENE SETTING contract. A stored refine system without
+    // Batch refine (v0.10) needs {{count}} and the SCENE DOCUMENT contract. A stored refine system without
     // {{count}} is the pre-batch default (or an edit of it) and makes the LLM merge N drafts into ONE prompt.
     if (s.generate && typeof s.generate.refineSystem === 'string' && !s.generate.refineSystem.includes('{{count}}')) {
         s.generate.refineSystem = DEFAULT_REFINE_SYSTEM;
+    }
+    // v2 -> v3: the "scene setting" (refine-only, per reply) became the SCENE DOCUMENT (step 1 of every reply,
+    // carried over to the next reply). The old setting system prompt is dropped; a refine system still written
+    // against "SCENE SETTING" is the v2 default (or an edit of it) and is replaced by the new default.
+    if (from < 3 && s.generate) {
+        delete s.generate.settingSystem;
+        if (typeof s.generate.refineSystem === 'string' && s.generate.refineSystem.includes('SCENE SETTING')) s.generate.refineSystem = DEFAULT_REFINE_SYSTEM;
     }
     s.version = SETTINGS_VERSION;
     return s;

@@ -119,7 +119,8 @@ globalThis.ifimgenInterceptor = async function ifimgenInterceptor(chat) {
 
 // ---- per-message button: lives in the message's own action bar right next to the "..." button (always visible,
 // not inside the collapsed extra-buttons menu). One button, three faces:
-//   no images -> generate | has images -> regenerate all | running -> cancel.   Shift+click removes the images.
+//   no images -> generate | has images -> regenerate all (step 2 again from the stored scene document; Alt+click = new
+//   scene document first) | running -> cancel.   Shift+click removes the images.
 function paintMessageButton(btn, id) {
     const m = getContext().chat[id];
     const running = pipeline.isRunning(id);
@@ -153,8 +154,14 @@ function addMessageButton(messageId) {
         if (e.shiftKey) { await pipeline.clear(id); return paintMessageButton(btn, id); }
         if (pipeline.isRunning(id)) return pipeline.cancel(id);
         try {
-            const r = await pipeline.run(id, { force: true });
-            if (r?.skipped) toastr.info(r.skipped, 'IF Imgen');
+            const m = getContext().chat[id];
+            if (m && countImages(m.mes) > 0) {
+                const r = await pipeline.regenerateAll(id, { newScene: e.altKey });
+                if (r?.none) toastr.info(t('st_no_images'), 'IF Imgen');
+            } else {
+                const r = await pipeline.run(id, { force: true });
+                if (r?.skipped) toastr.info(r.skipped, 'IF Imgen');
+            }
         } catch (err) { toastr.error(err.message, 'IF Imgen'); }
         finally { paintMessageButton(btn, id); }
     });

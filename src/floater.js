@@ -36,12 +36,13 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
     const statusText = st => `${t('job_running', { n: st.running })}${st.status ? ` — ${st.status}` : ''}`;
 
     // ------------------------------------------------------------------ actions
-    async function regenLast() {
+    /** Regenerate = step 2 again from the stored scene document; newScene = step 1 again first ("regen scene"). */
+    async function regenLast(newScene = false) {
         const id = lastCharMessage();
         if (id < 0) return toast('warning', t('st_no_char_msg'));
         closePop();
         try {
-            const r = await pipeline.regenerateAll(id, {});
+            const r = await pipeline.regenerateAll(id, { newScene });
             if (r?.none) return toast('info', t('st_no_images'));
         } catch (e) { toast('error', e.message); }
     }
@@ -146,6 +147,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
             <div class="ifimgen-fl-status">${busy ? statusText(lastState) : t('fl_title')}</div>
             <div class="ifimgen-fl-row">
                 <button type="button" class="ifimgen-fl-act primary" data-act="regen" title="${escapeHtml(t('fl_regen_sub'))}">${ICONS.refresh}<span><b>${t('fl_regen')}</b></span></button>
+                <button type="button" class="ifimgen-fl-act" data-act="regen-scene" title="${escapeHtml(t('fl_regen_scene_sub'))}">${ICONS.brain}<span><b>${t('fl_regen_scene')}</b></span></button>
                 <button type="button" class="ifimgen-fl-act" data-act="gen" title="${escapeHtml(t('fl_generate_sub'))}">${ICONS.sparkles}<span><b>${t('fl_generate')}</b></span></button>
             </div>
             ${busy ? item('cancel', 'x', t('fl_cancel', { n: lastState.running }), '', 'danger') : ''}
@@ -194,7 +196,8 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
         e.preventDefault(); e.stopPropagation();
         const act = b.dataset.act;
-        if (act === 'regen') regenLast();
+        if (act === 'regen') regenLast(false);
+        else if (act === 'regen-scene') regenLast(true);
         else if (act === 'gen') genLast();
         else if (act === 'cancel') { pipeline.cancel(); closePop(); }
         else if (act === 'gallery') { closePop(); openGallery?.(); }

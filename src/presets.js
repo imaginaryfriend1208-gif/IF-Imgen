@@ -1,9 +1,11 @@
-// IF Imgen - planner prompt presets (builtin + user). Pure module.
+// IF Imgen - prompt translator presets (step 2: scene document -> image prompts), builtin + user. Pure module.
 import { uuid } from './util.js';
 
 const OUTPUT_RULES = `
 
 WHAT YOU WRITE: an image prompt is a description of the SCENE in that paragraph -- who is present, what each person is doing, pose, expression, clothing state, where they are, lighting, camera angle/shot type. It is NOT a character sheet.
+
+SCENE DOCUMENT: when a SCENE DOCUMENT is given it is the authoritative description of this reply (location, layout, who is present, what each person wears with colours and state, expressions, actions per paragraph, poses). TRANSLATE it into the prompts: every prompt carries the location and lighting from the document, and for each present person the clothing exactly as the document states it (colours, state), the expression and the action of that paragraph, and the pose / position relative to the layout. Never contradict the document; the paragraph text only picks the moment and the camera.
 
 CAST: the ROSTER lists known people as $keyword with a short description so you can recognise them in the text. Their looks are attached automatically later, so NEVER re-describe their fixed appearance (hair, eyes, body, face, height). Mention each person present ONLY as their $keyword once, then describe what they are doing. If a paragraph has two people, mention both keywords and describe both. If a paragraph has no roster person, describe the scene without keywords.
 
@@ -18,8 +20,8 @@ OUTPUT FORMAT (strict): reply with ONLY a JSON array, no prose, no markdown fenc
 EXAMPLE (roster has $mara with details $mara.outfit, $mara.back; and $tomas): [{"p": 3, "prompt": "$mara sits on the edge of a bed with her back to the viewer, $mara.outfit pushed off one shoulder revealing $mara.back, leaning forward and sewing a wound on $tomas's side with steady hands; $tomas lies back with eyes closed; dim bedroom, single lamp on a nightstand, warm low light, medium shot from the foot of the bed"}]`;
 
 const DIALECT_RULES = {
-    tags: 'Write comma-separated danbooru-style tags (lowercase, spaces not underscores), 15-35 tags, most important first: count tags (1girl, 2boys), $keywords, actions, poses, expressions, clothing state, setting, lighting, camera. No sentences.',
-    natural: 'Write ONE vivid natural-language paragraph of 40-80 words: subject(s) and action first, then setting, lighting, camera. No tag lists, no headings.',
+    tags: 'Write comma-separated danbooru-style tags (lowercase, spaces not underscores), 20-45 tags, most important first: count tags (1girl, 2boys), $keywords, actions, poses, expressions, every garment with its colour and state, props that are in the shot, setting, lighting, camera. No sentences.',
+    natural: 'Write ONE vivid natural-language paragraph of 60-110 words: subject(s) and action first (clothing with colours and state, expression, pose), then setting and the props in the shot, lighting, camera. No tag lists, no headings.',
 };
 
 export const BUILTIN_PRESETS = [
@@ -98,19 +100,27 @@ export function findPreset(settings, id) {
 }
 
 /**
+ * Step 2 messages: scene document (+ paragraphs) -> N image prompts.
  * @param {object} preset
- * @param {{ paragraphs: {index:number,text:string}[], count:number, roster:string, context:string, dialect:string }} a
+ * @param {{ paragraphs: {index:number,text:string}[], count:number, roster:string, context?:string, dialect:string, sceneDoc?:string, fixed?:boolean }} a
+ *   sceneDoc - the scene document written in step 1 (authoritative). Earlier context is omitted when it is given.
+ *   fixed    - the listed paragraphs are exactly the ones to illustrate (regenerate: keep every image slot)
  */
 export function renderPlannerPrompt(preset, a) {
     const system = preset.system
         .replaceAll('{{count}}', String(a.count))
         .replaceAll('{{dialect_rule}}', DIALECT_RULES[a.dialect] ?? DIALECT_RULES.tags);
     const paraBlock = a.paragraphs.map(p => `[${p.index}] ${p.text}`).join('\n\n');
+    const doc = String(a.sceneDoc ?? '').trim();
+    const ask = a.fixed
+        ? `Write one prompt for EACH of the ${a.count} paragraph(s) listed (use every listed "p" exactly once), describe the SCENE of each (actions, poses, setting, lighting, camera), and reply with the JSON array only.`
+        : `Choose ${a.count} paragraph(s), describe the SCENE of each (actions, poses, setting, lighting, camera), and reply with the JSON array only.`;
     const user = [
         a.roster ? `ROSTER (keyword -> who they are; looks are added automatically, do not repeat them):\n${a.roster}` : 'ROSTER: (none)',
-        a.context ? `EARLIER CONTEXT:\n${a.context}` : '',
+        doc ? `SCENE DOCUMENT (authoritative for this reply - translate it into the prompts):\n${doc}` : '',
+        !doc && a.context ? `EARLIER CONTEXT:\n${a.context}` : '',
         `LATEST REPLY, NUMBERED PARAGRAPHS:\n${paraBlock}`,
-        `Choose ${a.count} paragraph(s), describe the SCENE of each (actions, poses, setting, lighting, camera), and reply with the JSON array only.`,
+        ask,
     ].filter(Boolean).join('\n\n');
     return { system, user };
 }

@@ -52,7 +52,8 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             <div class="ifimgen-lightbox-status ifimgen-status"></div>
             <div class="ifimgen-lightbox-bar">
                 ${btn({ cls: 'lb-prev', icon: 'play', title: t('vw_prev'), attrs: 'style="transform:scaleX(-1)"' })}
-                ${btn({ cls: 'lb-regen primary', icon: 'refresh', label: t('vw_regen') })}
+                ${btn({ cls: 'lb-regen primary', icon: 'refresh', label: t('vw_regen'), title: t('vw_regen_tip') })}
+                ${btn({ cls: 'lb-regen-scene', icon: 'brain', label: t('vw_regen_scene'), title: t('vw_regen_scene_tip') })}
                 ${btn({ cls: 'lb-edit', icon: 'save', label: t('vw_edit') })}
                 ${btn({ cls: 'lb-delete danger', icon: 'trash', title: t('vw_delete') })}
                 ${btn({ cls: 'lb-jump', icon: 'locate', title: t('vw_jump') })}
@@ -69,11 +70,16 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         const show = () => {
             const it = items[idx];
             img.src = it.url;
+            const doc = it.test ? '' : (pipeline.sceneDoc?.(it.messageId) ?? '');
             cap.innerHTML = `<b>#${idx + 1}/${items.length} · ${it.test ? t('vw_test') : `${t('vw_message')} ${it.messageId}`}</b>`
+                + (it.test ? '' : (doc
+                    ? `<details class="ifimgen-cap-doc"><summary><span class="ifimgen-cap-k">${t('vw_scene_doc')}</span> ${escapeHtml(doc.split('\n')[0].slice(0, 120))}…</summary><pre>${escapeHtml(doc)}</pre></details>`
+                    : `<div class="ifimgen-note">${t('vw_scene_doc_none')}</div>`))
                 + (it.scene ? `<div><span class="ifimgen-cap-k">${t('vw_scene')}</span> ${escapeHtml(it.scene)}</div>` : '')
                 + (it.refined ? `<div><span class="ifimgen-cap-k">${t('vw_refined')}</span> ${escapeHtml(it.refined)}</div>` : '')
                 + (it.prompt ? `<div><span class="ifimgen-cap-k">${t('vw_final')}</span> ${escapeHtml(it.prompt)}</div>` : `<div class="ifimgen-note">${t('vw_no_prompt')}</div>`);
             q('.lb-jump').style.display = it.test ? 'none' : '';
+            q('.lb-regen-scene').style.display = it.test ? 'none' : '';
             const hist = it.history ?? [];
             ver.style.display = hist.length ? '' : 'none';
             ver.innerHTML = hist.length ? `<span class="ifimgen-cap-k">${t('vw_versions')} (${hist.length + 1})</span>`
@@ -108,6 +114,23 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         q('.lb-open').addEventListener('click', () => window.open(items[idx].url, '_blank'));
         q('.lb-jump').addEventListener('click', () => { close(); jumpTo(items[idx].messageId); });
         q('.lb-regen').addEventListener('click', () => doRegen(undefined));
+        // Regen scene: step 1 again for the whole message, every image of it redrawn; the viewer list is refreshed from the records.
+        q('.lb-regen-scene').addEventListener('click', async () => {
+            const it = items[idx];
+            if (it.test) return;
+            lock(true);
+            try {
+                const r = await pipeline.regenerateScene(it.messageId, { onStatus: s => setStatus(s) });
+                if (r?.cancelled) return;
+                const ctx = getContext();
+                const recs = ctx.chat[it.messageId]?.extra?.ifimgen ?? [];
+                // Slots keep their order; map every item of this message onto its fresh record by position.
+                const mine = items.map((x, k) => [x, k]).filter(([x]) => !x.test && x.messageId === it.messageId);
+                mine.forEach(([x, k], n) => { const rec = recs[n]; if (rec) items[k] = fromRec(x, rec); });
+                show(); setStatus(t('vw_scene_regenerated', { n: r?.regenerated ?? 0 }), 'ok'); onChanged();
+            } catch (e) { setStatus(e.message, 'error'); }
+            finally { lock(false); }
+        });
         ver.addEventListener('click', async e => {
             const im = e.target.closest('img[data-k]');
             if (!im || busy) return;

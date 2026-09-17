@@ -6,12 +6,13 @@
 //   $char.back / $charBack   -> same facet of the most recently mentioned character
 //   $user.outfit / $userOutfit / $persona.outfit -> same for the user persona
 //
-// Mode 'plan'  (1 LLM call): tokens are expanded verbatim into the scene text.
-// Mode 'refine' (3 LLM calls per MESSAGE, independent of the image count):
-//   1. planner -> N shot drafts (with tokens)
-//   2. setting -> ONE shared SCENE SETTING: where, who is present, what each wears, what they do, poses
-//   3. refine  -> ONE batch call: setting + cast + the N drafts -> N final prompts (JSON array)
-// The batch call (never one call per image) keeps location / people / clothing identical across images.
+// Pipeline per MESSAGE (independent of the image count):
+//   1. scene planner -> ONE SCENE DOCUMENT: what happens, style, location, detailed layout, who is present,
+//                       what each wears (colours, state), expression, actions, pose. Stored on the message and
+//                       handed to the planner of the NEXT reply for continuity.
+//   2. translator    -> the scene document + the numbered paragraphs -> N image prompts with tokens (JSON array)
+//   3. refine (optional) -> ONE batch call: document + cast + the N prompts -> N polished prompts (JSON array)
+// Regenerating an image re-runs step 2 (+3) from the stored document; only "regen scene" re-runs step 1.
 import { keysOf, normalizeKeyword } from './entities.js';
 import { extractJsonArray } from './presets.js';
 
@@ -100,48 +101,56 @@ export function rosterLine(e, label) {
     return `$${e.keyword} — ${label}: ${e.name}${desc ? ` — ${desc}` : ''}${facets.length ? `\n    details: ${facets.join(', ')}` : ''}`;
 }
 
-// ---------------------------------------------------------------- scene setting (refine step 1)
+// ---------------------------------------------------------------- scene document (step 1)
 
-export const DEFAULT_SETTING_SYSTEM = `You are the continuity supervisor of an illustrated roleplay. You read the latest reply (numbered paragraphs) plus earlier context and write ONE SCENE SETTING that every image made for this reply must obey.
-Write plain text with these sections, short factual lines:
-LOCATION: where this happens (indoors/outdoors, room type, notable furniture or props), time of day, weather, lighting.
-PEOPLE PRESENT: how many people are physically in the scene, then their names.
+export const DEFAULT_SCENE_SYSTEM = `You are the scene planner and continuity keeper of an illustrated roleplay. You read the latest reply (numbered paragraphs), the earlier chat context, the CAST (known people with their stored details) and the PREVIOUS SCENE DOCUMENTS written for earlier replies, and you write ONE SCENE DOCUMENT for this reply. Every image prompt of this reply is written from this document only, and the document is read again when the next reply is planned, so it must be precise, complete and consistent with the previous documents unless the text clearly changes something.
+Write plain text in these sections, short factual lines, in this order:
+SCENE: what happens in this reply in 2-3 sentences; the mood; the visual style or genre feel (quiet domestic drama, tense noir, warm slice of life...).
+LOCATION: indoors or outdoors; the type of place (bedroom, kitchen, alley, forest road...); time of day; weather; the light sources and the quality of the light (colour, direction, intensity).
+LAYOUT: the room or area in detail - size, walls / floor / ceiling or ground and sky, doors and windows, every notable piece of furniture and prop and WHERE it is (bed against the left wall, nightstand with a lit lamp on its right, window behind the bed, clothes on the floor by the door...). When the place is the same as in a previous document, carry its layout over and only add what is new.
+PEOPLE PRESENT: how many people are physically in the scene, then their names. People only mentioned, remembered or on the phone are NOT present.
 For EACH person present, one block:
 - <name>
-  WEARING: the exact clothing right now and its state (buttoned, soaked, pushed off one shoulder, removed...). If the CAST lists an outfit detail for that person, use it unless the text clearly says otherwise. If they are undressed, say so.
-  DOING: what they do over the course of this reply, in order.
-  POSE / POSITION: body position and where they are relative to the others and to the furniture.
-  If clothing changes during the reply (undressing, getting dressed, soaked), write the change under DOING with the paragraph number, and put the final state under WEARING.
-Rules: state only what the text and cast say or clearly imply; never invent new people or garments; never describe fixed looks (hair, eyes, body, face); one WEARING line per person is the wardrobe for the WHOLE reply — every image must use it. No preamble, no markdown, no quotes.`;
+  WEARING: every garment right now with its colour, material or pattern when known, and its state (buttoned, unbuttoned, soaked, torn, pushed off one shoulder, removed and lying where...). Include footwear and accessories. If the CAST lists an outfit detail for that person, use it unless the text clearly says otherwise. If undressed, say exactly what is on and what is off.
+  EXPRESSION: the face and the gaze (what or whom they look at), the emotion as it shows on the face.
+  DOING: what they do over the course of this reply, in order, with the paragraph number of each action ([3] sits on the edge of the bed...).
+  POSE / POSITION: body position and where they are relative to the others and to the layout (standing by the window, kneeling at the foot of the bed, facing away...).
+  If clothing changes during the reply, note the change under DOING with its paragraph number and put the FINAL state under WEARING.
+CONTINUITY: what stays as in the previous document and what changed (moved to another room, undressed, a new prop, time passed, someone left or arrived).
+Rules: state only what the text, the cast and the previous documents say or clearly imply; never invent new people; never describe fixed looks (hair colour, eyes, body, face, height) - those are attached automatically; never contradict a previous document unless this reply clearly changes it. No preamble, no markdown, no quotes.`;
 
 /**
- * Build the scene-setting messages (one call per message, shared by all its images).
- * @param {{ system?:string, paragraphs:{index:number,text:string}[], context?:string, characters:object[], personas:object[] }} a
+ * Build the scene-document messages (step 1, one call per message, shared by all its images).
+ * @param {{ system?:string, paragraphs:{index:number,text:string}[], context?:string, previous?:{id:number,text:string}[], characters:object[], personas:object[] }} a
+ *   previous - scene documents of earlier replies (oldest first) handed over for continuity
  */
-export function buildSettingPrompt(a) {
-    const system = String(a.system || DEFAULT_SETTING_SYSTEM);
+export function buildScenePrompt(a) {
+    const system = String(a.system || DEFAULT_SCENE_SYSTEM);
     const cast = [...(a.characters ?? []).map(e => [e, 'character']), ...(a.personas ?? []).map(e => [e, 'user persona'])];
     const castBlock = cast.map(([e, label]) => {
         const facets = (e.facets ?? []).map(f => `  ${f.key}: ${f.text}`);
         return `- ${e.name} (${label})${facets.length ? `\n${facets.join('\n')}` : ''}`;
     });
+    const prev = (a.previous ?? []).filter(x => x && String(x.text ?? '').trim());
+    const prevBlock = prev.map((x, i) => `--- document ${i + 1} of ${prev.length}${i === prev.length - 1 ? ' (most recent)' : ''} ---\n${String(x.text).trim()}`).join('\n\n');
     const paraBlock = (a.paragraphs ?? []).map(p => `[${p.index}] ${p.text}`).join('\n\n');
     const user = [
         castBlock.length ? `CAST (known people and their stored details):\n${castBlock.join('\n')}` : 'CAST: (nobody from the roster)',
+        prev.length ? `PREVIOUS SCENE DOCUMENTS (continuity - keep what did not change):\n${prevBlock}` : 'PREVIOUS SCENE DOCUMENTS: (none - this is the first illustrated reply)',
         a.context ? `EARLIER CONTEXT:\n${a.context}` : '',
         `LATEST REPLY, NUMBERED PARAGRAPHS:\n${paraBlock}`,
-        'Write the scene setting now.',
+        'Write the scene document for the latest reply now.',
     ].filter(Boolean).join('\n\n');
     return { system, user };
 }
 
-// ---------------------------------------------------------------- refine (step 2, ONE batch call for all shots)
+// ---------------------------------------------------------------- refine (step 3, ONE batch call for all shots)
 
-export const DEFAULT_REFINE_SYSTEM = `You write prompts for an image generation model. You receive a SCENE SETTING (the authoritative description of the place, who is present, what each person wears and does), a CAST (people with their base look and the details that matter), an optional STYLE, and {{count}} SHOT DRAFT(S) written by a director. Write one final image prompt per shot.
+export const DEFAULT_REFINE_SYSTEM = `You polish prompts for an image generation model. You receive a SCENE DOCUMENT (the authoritative description of the place, its layout, who is present, what each person wears, feels and does), a CAST (people with their base look and the details that matter), an optional STYLE, and {{count}} SHOT DRAFT(S) already written from that document. Write one final image prompt per shot: keep the content of the draft, add the missing visual tags and tidy the details.
 Rules:
-- The SCENE SETTING is the single source of truth: the same location, the same people and the same clothing (and clothing state) appear in EVERY prompt. Never change an outfit between shots unless the setting explicitly says it changes at that moment.
-- A SHOT DRAFT only chooses the moment, the action, the framing and the camera. If a draft or a cast detail contradicts the setting about place, who is present or what someone wears, the SETTING wins and the contradiction is dropped.
-- Keep every visual fact from the cast and the draft that does not conflict with the setting; do not invent new people, garments or props, or change what they do.
+- The SCENE DOCUMENT is the single source of truth: the same location, the same people and the same clothing (colours and state) appear in EVERY prompt. Never change an outfit between shots unless the document says it changes at that moment.
+- A SHOT DRAFT chooses the moment, the action, the framing and the camera. If a draft or a cast detail contradicts the document about place, who is present or what someone wears, the DOCUMENT wins and the contradiction is dropped.
+- Keep every visual fact from the cast and the draft that does not conflict with the document; do not invent new people, garments or props, or change what they do.
 - Fold the base look and the listed details into the description of the person naturally (e.g. "a small girl with dark parted hair ... a big tattoo on her left shoulder blade visible through the wet shirt").
 - Include only what would be visible in that shot; if a person is seen from behind, do not describe the face.
 - Do not repeat the same fact twice inside one prompt. No preamble, no explanation, no markdown fence.
@@ -157,6 +166,7 @@ export const REFINE_DIALECT_RULES = {
 /**
  * Build the refine messages for ALL shots of a message in one call.
  * @param {{ system:string, dialect:string, setting?:string, shots?:{expanded:string, used:Map<string,Set<string>>}[], expanded?:string, used?:Map<string,Set<string>>, characters:object[], personas:object[], style:object|null }} a
+ *   setting    - the scene document of the message (step 1)
  *   shots      - one entry per image (draft with names/facets already expanded + facets it referenced)
  *   expanded/used - legacy single-shot form, equivalent to shots=[{expanded, used}]
  */
@@ -181,7 +191,7 @@ export function buildRefinePrompt(a) {
     const styleLine = a.style ? `STYLE: ${a.style.natural || a.style.tags || a.style.name}` : '';
     const drafts = shots.map((s, i) => `[${i + 1}] ${s.expanded}`).join('\n\n');
     const user = [
-        a.setting ? `SCENE SETTING (shared by all shots, authoritative):\n${a.setting}` : '',
+        a.setting ? `SCENE DOCUMENT (shared by all shots, authoritative):\n${a.setting}` : '',
         castBlock.length ? `CAST:\n${castBlock.join('\n')}` : 'CAST: (nobody from the roster)',
         styleLine,
         `SHOT DRAFTS (director's drafts, names already resolved):\n${drafts}`,
