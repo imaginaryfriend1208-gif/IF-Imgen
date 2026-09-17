@@ -541,7 +541,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             gen.title = gen.querySelector('span').textContent;
             for (const c of ['.ent-profile-edit', '.ent-profile-preview']) q(c).disabled = running || !saved;
             // No job for this entry any more -> a status line still saying "generating … rendering…" is stale; clear it.
-            if (!running) { const n = q('.ent-profile-status'); if (n.textContent.startsWith(t('st_profile_running'))) { n.textContent = ''; n.className = 'ifimgen-status'; } }
+            if (!running) { const n = q('.ent-profile-status'); if (n.textContent.includes(t('st_profile_running'))) { n.textContent = ''; n.className = 'ifimgen-status'; } }
             q('.ent-profile-open').disabled = !cur;
             q('.ent-profile-delete').disabled = running || !cur;
             const det = q('.ent-profile-prompt');
@@ -561,7 +561,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             const shot = q('.ent-profile-shot').value, sfw = q('.ent-profile-sfw').checked, useLlm = q('.ent-profile-llm').checked;
             renderProfile(saved);
             try {
-                const rec = await pipeline.profileImage({ kind, id: saved.id, shot, sfw, draft, useLlm, onStatus: s => { profStatus(`${t('st_profile_running')} — ${s}`); renderProfile(saved); } });
+                const rec = await pipeline.profileImage({ kind, id: saved.id, shot, sfw, draft, useLlm, onStatus: s => { if (!pipeline.profileRunning?.(saved.id)) return; profStatus(`${t('st_profile_running')} — ${s}`); renderProfile(saved); } });
                 if (rec) profStatus(t('st_profile_done'), 'ok');
             } catch (err) { profStatus(err.message, 'error'); }
             finally { renderProfile(savedEntity() ?? saved); }
@@ -861,7 +861,7 @@ function settingsPanel() {
                 <div class="ifimgen-row"><label>${t('lbl_api_key')}</label><input id="ifimgen_llm_key" class="text_pole" type="password" autocomplete="off"></div>
                 <div class="ifimgen-row"><label>${t('lbl_model')}</label><input id="ifimgen_llm_model" class="text_pole" type="text"></div>
             </div>
-            ${numRow('ifimgen_llm_maxtokens', t('lbl_max_tokens'), 200, 8000, 100)}
+            ${numRow('ifimgen_llm_maxtokens', t('lbl_max_tokens'), 200, 16000, 100)}
             <div class="ifimgen-row">${btn({ id: 'ifimgen_llm_test', icon: 'plug', label: t('btn_test_llm') })}<span id="ifimgen_llm_status" class="ifimgen-status"></span></div>
         </div>
     </div>`;

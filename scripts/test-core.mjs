@@ -93,7 +93,7 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     const withDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', sceneDoc: doc });
     assert.ok(withDoc.system.startsWith('custom 1') && withDoc.system.includes('SCENE DOCUMENT RULES') && withDoc.system.includes('WEARING lines with colours and state'));
     assert.ok(withDoc.system.includes('110-170 words') && !withDoc.system.includes('{{'), 'doc length rule follows the dialect, no leftover placeholder');
-    assert.ok(withDoc.system.includes('EXAMPLE with a document (prose)'), 'doc example follows the dialect');
+    assert.ok(withDoc.system.includes('EXAMPLE with a document (prose;'), 'doc example follows the dialect');
     // Krea / NAI presets force their dialect regardless of the global setting; length macros follow doc / no doc.
     const krea = BUILTIN_PRESETS.find(p => p.id === 'krea_natural'), nai = BUILTIN_PRESETS.find(p => p.id === 'nai_tags');
     const k = renderPlannerPrompt(krea, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
@@ -102,13 +102,14 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     assert.ok(n.system.includes('TAG PROMPT') && n.system.includes('40-65 tags') && n.system.includes('NovelAI') && n.system.includes('CONTACT CHAIN') && !n.system.includes('PROSE PROMPT') && !n.system.includes('{{'));
     assert.equal(presetDialect(krea, 'tags'), 'natural'); assert.equal(presetDialect(BUILTIN_PRESETS[0], 'natural'), 'natural'); assert.equal(presetDialect(BUILTIN_PRESETS[0], 'bogus'), 'tags');
     assert.equal(createPreset({ name: 'fork', system: 'x', dialect: 'natural' }).dialect, 'natural'); assert.equal(createPreset({ name: 'plain', system: 'x' }).dialect, undefined);
-    assert.ok(withDoc.system.includes('Do NOT replace it with a $keyword.outfit token'), 'clothing written in words, not as a facet token');
+    assert.ok(withDoc.system.includes('WEARING lines with colours and state'), 'doc rules still ask for clothing in words');
     assert.ok(withDoc.user.includes('translate the SCENE DOCUMENT'));
     const noDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
     assert.ok(!noDoc.system.includes('SCENE DOCUMENT RULES') && !noDoc.system.includes('{{'));
-    assert.equal(defaultSettings().connection.llm.maxTokens, 2000);
-    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 1200 } } } }).connection.llm.maxTokens, 2000, 'old default raised');
-    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 900, 'user value kept');
+    assert.equal(defaultSettings().connection.llm.maxTokens, 8000);
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 1200 } } } }).connection.llm.maxTokens, 8000, 'old default raised');
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 8000, 'v4 lifts small caps');
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 12000 } } } }).connection.llm.maxTokens, 12000, 'larger user value kept');
 });
 
 const s = defaultSettings();
@@ -155,7 +156,7 @@ test('resolveEntities: no keyword -> bound entities; keyword -> only the named o
 test('planner prompt tells the LLM to describe the scene, not the character sheet', () => {
     const { system } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '$a — character: A', context: '', dialect: 'natural' });
     assert.ok(/NOT a character sheet/i.test(system));
-    assert.ok(/NEVER re-describe/i.test(system));
+    assert.ok(/Do NOT repeat a person's base look/i.test(system));
     assert.ok(system.includes('EXAMPLE'));
 });
 
@@ -251,9 +252,9 @@ test('expandScene: $kw.facet, $char.facet, $userOutfit forms; unknown tokens dro
 
 test('roster lists detail tokens so the planner knows what exists', () => {
     const line = rosterLine(yenka, 'user persona');
-    assert.ok(line.includes('$yenka') && line.includes('$yenka.outfit, $yenka.back'));
+    assert.ok(line.includes('$yenka') && line.includes('$yenka.outfit:') && line.includes('$yenka.back:'));
     const s3 = defaultSettings(); s3.data.personas.push(yenka);
-    assert.ok(rosterText(s3, {}).includes('details: $yenka.outfit'));
+    assert.ok(rosterText(s3, {}).includes('$yenka.outfit:'));
 });
 
 test('refine prompt: cast carries base look + only referenced details; style + expanded scene included', () => {
@@ -294,7 +295,7 @@ test('step 1 (scene document): sections, cast details, previous documents (oldes
     const st = buildScenePrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka], previous: [{ id: 3, text: 'DOC A' }, { id: 7, text: 'DOC B' }] });
     for (const k of ['SCENE:', 'LOCATION:', 'LAYOUT:', 'PEOPLE PRESENT:', 'WEARING:', 'EXPRESSION:', 'DOING:', 'POSE / POSITION:', 'CONTINUITY:']) assert.ok(st.system.includes(k), `section ${k}`);
     assert.ok(st.system.includes('colour') && st.system.includes('WHERE it is'), 'clothing colours + prop placement demanded');
-    assert.ok(st.system.includes('TOKENS:') && st.system.includes('$keyword.detail'), 'planner is told to write tokens');
+    assert.ok(st.system.includes('TOKENS:') && st.system.includes('$keyword.entry') && st.system.includes('NEW TOKENS'), 'planner is told to write tokens and define new ones');
     assert.ok(st.user.includes('$yenka.outfit: white button-up shirt') && st.user.includes('token $rosario') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
     // Stored document keeps tokens; the downstream LLMs get words. Unknown tokens are kept, not dropped.
     const doc = 'PEOPLE PRESENT: 2 - $yenka, $rosario\n- $yenka\n  WEARING: $yenka.outfit, unbuttoned\n  POSE: back to viewer showing $yenka.back\n- $rosario\n  WEARING: $rosario.armor, dented';
@@ -379,7 +380,7 @@ test('model profile prompt prefs: dialect / negative per model beat the global s
 
 test('planner rules mention detail tokens', () => {
     const { system } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', context: '', dialect: 'tags' });
-    assert.ok(system.includes('DETAILS:') && system.includes('$yenka.back'));
+    assert.ok(system.includes('TOKENS:') && system.includes('$yenka.back'));
 });
 
 test('binding: chat id / card avatar / persona avatar / always -- identifiers only', () => {
@@ -553,7 +554,7 @@ test('profile image: parseProfilePrompt accepts object / array / fenced / plain;
     const d = profileDraft({ entity: e, dialect: 'tags', shot: 'portrait', sfw: true });
     assert.ok(d.startsWith('solo, portrait') && d.includes('1boy, short brown hair') && d.includes('grey hoodie') && !d.includes(', x'), d);
     const n = profileDraft({ entity: e, dialect: 'natural', shot: 'full', sfw: true });
-    assert.ok(n.startsWith('A full-body portrait of Me:') && n.includes('grey hoodie') && n.includes('looking at the viewer'), n);
+    assert.ok(n.startsWith('A full-body shot of Me, standing, seen from a distance') && n.includes('grey hoodie') && n.includes('looking at the viewer'), n);
     // no base look at all -> still a prompt, not an empty string
     assert.ok(profileDraft({ entity: createEntity('characters', { name: 'Nobody' }), dialect: 'tags' }).includes('solo'));
 });
@@ -706,7 +707,7 @@ test('compilePrompt sceneFirst (profile images): the framing sentence opens the 
     const draft = profileDraft({ entity: e, dialect: 'natural', shot: 'full', sfw: true });
     const nat = compilePrompt({ scene: draft, characters: [e], personas: [], style, settings, backend: 'sd', merged: true, dialect: 'natural', sceneFirst: true }).prompt;
     const noLora = nat.replace(/<lora:[^>]+>\s*/g, '');
-    assert.ok(noLora.startsWith('A full-body portrait of Ly'), noLora.slice(0, 80));
+    assert.ok(noLora.startsWith('A full-body shot of Ly, standing'), noLora.slice(0, 80));
     assert.ok(noLora.indexOf('feet inside the frame') < noLora.indexOf('impasto'), 'framing before style');
     assert.ok(nat.startsWith('<lora:x:1>'), 'LoRA token still leads');
     const tg = compilePrompt({ scene: 'solo, full body, feet visible', characters: [e], personas: [], style, settings, backend: 'sd', merged: true, dialect: 'tags', sceneFirst: true }).prompt;
@@ -724,6 +725,12 @@ test('profile image: framing words differ per shot and spell out bust / full (wa
     assert.ok(t('bust').includes('from the waist up') && !t('bust').includes('face focus'));
     assert.ok(t('full').includes('full body') && t('full').includes('feet visible'));
     assert.ok(n('bust').includes('waist up') && n('full').includes('feet inside the frame') && n('portrait').includes('nothing below the chest'));
+    assert.ok(!n('full').includes('portrait') && !n('bust').includes('portrait'), 'no "portrait" word on bust / full (read as a head shot)');
+    // SFW drops explicit details by CONTENT, not only by key name (users name them breasts / pussy / cock ...)
+    const x = createEntity('characters', { name: 'X', keyword: 'x', tags: '1girl', facets: ['body: hourglass figure, wide hips', 'breasts: round breasts with pale pink nipples', 'pussy: hairless pink pussy', 'tattoos: a rose on the left shoulder'].join(String.fromCharCode(10)) });
+    const sfwFull = profileDraft({ entity: x, dialect: 'tags', shot: 'full', sfw: true });
+    assert.ok(sfwFull.includes('hourglass') && sfwFull.includes('rose on the left shoulder') && !sfwFull.includes('nipples') && !sfwFull.includes('pussy'), sfwFull);
+    assert.ok(profileDraft({ entity: x, dialect: 'tags', shot: 'full', sfw: false }).includes('nipples'));
     assert.equal(new Set([t('portrait'), t('bust'), t('full')]).size, 3);
 });
 

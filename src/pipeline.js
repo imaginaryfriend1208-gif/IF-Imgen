@@ -1,19 +1,21 @@
 // IF Imgen - per-message pipeline:
 //   step 1  scene planner  : paragraphs + context + previous scene documents -> ONE scene document (message.extra.ifimgen_scene)
-//   step 2  translator     : scene document + paragraphs -> N image prompts with $tokens (JSON)
+//   step 2  translator     : scene document + paragraphs -> N image prompts, each in two versions: raw "prompt" with
+//                            $tokens and smooth "final" (tokens written out, only the traits the shot shows) (JSON)
 //   step 3  refine (opt.)  : ONE batch call polishing the N prompts against the document (mode 'refine')
+//   compile: refined > final > expanded raw prompt; with final / refined the compiler adds LoRA + style + negative only.
 //   render each prompt -> insert in place. Each image is recorded in message.extra.ifimgen so it can be regenerated later.
 // Regenerate (one image / all images) re-runs step 2 (+3) from the STORED document; "regen scene" / Generate re-run step 1.
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, findPreset, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
-import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
+import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined, parseDocTokens } from './scene.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft } from './profile.js';
 import { normalizeProfile, PROFILE_VERSIONS } from './entities.js';
 import { clamp } from './util.js';
 
-/** @typedef {{ url:string, p:number, scene:string, expanded:string, setting:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord  (setting = the scene document the image was written from) */
+/** @typedef {{ url:string, p:number, scene:string, final:string, expanded:string, setting:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord  (scene = raw $token prompt, final = its smooth version from step 2, setting = the scene document the image was written from) */
 /** @typedef {{ text:string, at:number }} SceneDoc  stored in message.extra.ifimgen_scene */
 /** @typedef {{ url:string, scene:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} TestRecord */
 
@@ -189,16 +191,19 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
-     * Step 2: translate the scene document (+ the numbered paragraphs) into image prompts with $tokens.
+     * Step 2: translate the scene document (+ the numbered paragraphs) into image prompts - raw `prompt` with $tokens
+     * and smooth `final` (absent when the LLM left it out or it still carried a $ token).
      * `fixed` = write one prompt for every listed paragraph (regenerate keeps every image slot).
-     * @returns {Promise<{p:number, prompt:string}[]>}
+     * @returns {Promise<{p:number, prompt:string, final?:string, ar?:string}[]>}
      */
     async function planShots(ctx, { paragraphs, count, sceneDoc, presetId, fixed = false, context = '' }, signal) {
         const g = settings.generate;
         const preset = findPreset(settings, presetId ?? g.presetId);
+        const dialect = effectiveDialect(settings, preset.id);
         const { system, user } = renderPlannerPrompt(preset, {
-            paragraphs, count, dialect: effectiveDialect(settings, preset.id), sceneDoc: docWords(ctx, sceneDoc), fixed, context, autoAspect: g.autoAspect === true,
-            roster: rosterText(settings, chatIdentity(ctx)),
+            paragraphs, count, dialect, sceneDoc: docWords(ctx, sceneDoc), fixed, context, autoAspect: g.autoAspect === true,
+            // Roster carries the texts of base look + Details + World so the writer can produce the smooth "final".
+            roster: rosterText(settings, chatIdentity(ctx), dialect),
         });
         const reply = await llm.chat({ system, user, signal });
         const plan = parsePlan(reply, paragraphs.map(p => p.index)).slice(0, count);
@@ -208,19 +213,24 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     /**
      * Compile N translated prompts of ONE message -> N final prompts.
-     * mode 'plan'   : tokens ($yenka, $yenka.back) expanded verbatim, cast fragments prepended by compiler. No LLM.
+     * mode 'plan'   : the step-2 `final` (smooth, no tokens) when present, else the raw prompt with tokens expanded
+     *                 verbatim and the cast's base look prepended by the compiler. No LLM.
      * mode 'refine' : ONE batch LLM call for all prompts (document + cast + N drafts -> N prompts), never one call per image,
      *                 so location / people / clothing stay identical across the images of a reply.
-     * @returns {Promise<{ prompt:string, negative:string, ents:object, expanded:string, refined:string, unknown:string[] }[]>}
+     * `finals[i]` = the smooth version of scenes[i] from step 2 ('' when none). Ad-hoc tokens of the scene document
+     * (its TOKENS section) resolve in the raw prompts after Details / World.
+     * @returns {Promise<{ prompt:string, negative:string, ents:object, expanded:string, final:string, refined:string, unknown:string[] }[]>}
      */
-    async function compileScenes(ctx, scenes, backendId, signal, { setting = '' } = {}) {
+    async function compileScenes(ctx, scenes, backendId, signal, { setting = '', finals = [] } = {}) {
         const g = settings.generate;
         const ident = chatIdentity(ctx);
         // Entities are resolved on the union of all scenes so every image carries the same cast.
         const ents = resolveEntities(settings, { text: scenes.join('\n'), ...ident });
-        const shots = scenes.map(scene => expandScene({ scene, characters: ents.characters, personas: ents.personas }));
+        const adhoc = parseDocTokens(setting);
+        const shots = scenes.map(scene => expandScene({ scene, characters: ents.characters, personas: ents.personas, adhoc }));
         for (const ex of shots) if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
         const dialect = effectiveDialect(settings);
+        const final = scenes.map((_, i) => String(finals[i] ?? '').trim());
         let refined = scenes.map(() => '');
         if (g.mode === 'refine') {
             const msgs = buildRefinePrompt({ system: g.refineSystem, dialect, setting: docWords(ctx, setting), shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
@@ -229,8 +239,11 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             refined.forEach((r, i) => { if (!r) log(`refine: shot ${i + 1} missing in reply, falling back to the expanded draft`); });
         }
         return shots.map((ex, i) => {
-            const { prompt, negative } = compilePrompt({ scene: refined[i] || ex.text, ...ents, settings, backend: backendId, merged: Boolean(refined[i]), dialect });
-            return { prompt, negative, ents, expanded: ex.text, refined: refined[i], unknown: ex.unknown };
+            // refined (step 3) > final (step 2, smooth) > expanded raw prompt. The first two already carry the looks
+            // the shot needs -> merged: the compiler adds LoRA + style + negative only, no duplicate base look.
+            const text = refined[i] || final[i] || ex.text;
+            const { prompt, negative } = compilePrompt({ scene: text, ...ents, settings, backend: backendId, merged: Boolean(refined[i] || final[i]), dialect });
+            return { prompt, negative, ents, expanded: ex.text, final: final[i], refined: refined[i], unknown: ex.unknown };
         });
     }
 
@@ -301,16 +314,16 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const backend = backends.active();
         const { url, model } = await renderRaw(ctx, { prompt: c.prompt, negative: c.negative, ar }, signal, status);
         /** @type {ImageRecord} */
-        return { url, p, scene, ar, expanded: c.expanded, setting, refined: c.refined, prompt: c.prompt, negative: c.negative, mode: settings.generate.mode, backend: backend.id, model, at: Date.now() };
+        return { url, p, scene, ar, final: c.final ?? '', expanded: c.expanded, setting, refined: c.refined, prompt: c.prompt, negative: c.negative, mode: settings.generate.mode, backend: backend.id, model, at: Date.now() };
     }
 
     const logCompiled = (c, label = '') => log(`compiled${label} [chars: ${c.ents.characters.map(e => e.name).join(',') || '-'} | personas: ${c.ents.personas.map(e => e.name).join(',') || '-'} | style: ${c.ents.style?.name ?? '-'}]`, c.prompt);
 
     /** Compile + render ONE prompt (single regenerate). `setting` = scene document of the message. */
-    async function render(ctx, { scene, p, setting = '' }, signal, status) {
+    async function render(ctx, { scene, p, setting = '', final = '' }, signal, status) {
         const backend = backends.active();
         if (settings.generate.mode === 'refine') status('refining prompt…');
-        const c = await compileScene(ctx, scene, backend.id, signal, { setting });
+        const c = await compileScene(ctx, scene, backend.id, signal, { setting, finals: [final] });
         logCompiled(c);
         return renderCompiled(ctx, { scene, p, setting }, c, signal, status);
     }
@@ -371,7 +384,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
             // Step 3 (mode 'refine'): ONE batch refine call for ALL images of this reply.
             if (g.mode === 'refine') status(`refining ${plan.length} prompt${plan.length > 1 ? 's' : ''} in one call…`);
-            const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting });
+            const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting, finals: plan.map(x => x.final ?? '') });
             if (g.mode === 'refine') tm.lap('refine');
             compiled.forEach((c, i) => logCompiled(c, ` #${i + 1}`));
 
@@ -423,15 +436,17 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const had = Boolean(sceneDocOf(msg));
             const setting = await sceneDocFor(ctx, messageId, { paragraphs, signal: controller.signal, status });
             if (!had && setting) tm.lap('scene');
-            let useScene = edited;
+            // An edited draft is drawn as typed (no smooth version); otherwise step 2 runs again and its `final` is used,
+            // falling back to the stored raw prompt + stored final when the translation fails.
+            let useScene = edited, useFinal = '';
             if (!useScene && para && setting) {
                 status('writing prompt…');
-                try { useScene = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true }, controller.signal))[0]?.prompt ?? ''; }
+                try { const hit = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true }, controller.signal))[0]; useScene = hit?.prompt ?? ''; useFinal = hit?.final ?? ''; }
                 catch (e) { if (e?.name === 'AbortError') throw e; log('regen: translation failed, reusing the stored prompt', e.message); }
                 tm.lap('prompt');
             }
-            useScene ||= String(rec?.scene ?? '').trim();
-            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting }, controller.signal, status);
+            if (!useScene) { useScene = String(rec?.scene ?? '').trim(); useFinal = String(rec?.final ?? '').trim(); }
+            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal }, controller.signal, status);
             tm.lap(settings.generate.mode === 'refine' ? 'refine+image' : 'image');
             if (rec) fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
             const list = records(msg);
@@ -481,18 +496,19 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if ((newScene || !had) && setting) tm.lap('scene');
             // Step 2 for every slot that still has its paragraph; slots without one keep their stored prompt.
             const prompts = todo.map(r => String(r.scene ?? '').trim());
+            const finals = todo.map(r => String(r.final ?? '').trim());
             const slots = todo.map((r, i) => ({ i, para: paraOf(r) })).filter(x => x.para);
             if (slots.length && setting) {
                 status(`writing ${slots.length} prompt${slots.length > 1 ? 's' : ''}…`);
                 try {
                     const plan = await planShots(ctx, { paragraphs: slots.map(x => x.para), count: slots.length, sceneDoc: setting, fixed: true }, controller.signal);
-                    for (const x of slots) { const hit = plan.find(y => y.p === x.para.index); if (hit) prompts[x.i] = hit.prompt; }
+                    for (const x of slots) { const hit = plan.find(y => y.p === x.para.index); if (hit) { prompts[x.i] = hit.prompt; finals[x.i] = hit.final ?? ''; } }
                 } catch (e) { if (e?.name === 'AbortError') throw e; log('regen-all: translation failed, reusing the stored prompts', e.message); }
                 tm.lap('prompts');
             }
             if (prompts.some(p => !p)) throw new Error('No prompt for one of the images — use "Edit & regenerate" on it.');
             if (settings.generate.mode === 'refine') status(`refining ${todo.length} prompt${todo.length > 1 ? 's' : ''} in one call…`);
-            const compiled = await compileScenes(ctx, prompts, backends.active().id, controller.signal, { setting });
+            const compiled = await compileScenes(ctx, prompts, backends.active().id, controller.signal, { setting, finals });
             if (settings.generate.mode === 'refine') tm.lap('refine');
             for (let i = 0; i < todo.length; i++) {
                 const rec = { ...todo[i], scene: prompts[i] };
@@ -776,7 +792,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const r = migrateLegacyImages(m.mes);
             if (!r.changed) return;
             const list = records(m);
-            for (const { url, title } of r.recovered) if (!list.some(x => x.url === url)) list.push({ url, p: 0, scene: '', expanded: '', setting: '', refined: '', prompt: title, negative: '', mode: '', backend: '', model: '', at: 0 });
+            for (const { url, title } of r.recovered) if (!list.some(x => x.url === url)) list.push({ url, p: 0, scene: '', final: '', expanded: '', setting: '', refined: '', prompt: title, negative: '', mode: '', backend: '', model: '', at: 0 });
             setMessageText(ctx, id, r.mes);
             changed++;
         });
@@ -793,6 +809,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         // is available again right away even if the backend never answers.
         cancelProfile: id => { const key = PROFILE_KEY(id); const c = inflight.get(key); if (!c) return; c.abort(); end(key); },
         sceneDoc: messageId => sceneDocOf(getContext().chat[messageId]),
+        /** Ad-hoc tokens ($kw.key: text) defined in the stored scene document of a message (for "save tokens to entry"). */
+        sceneDocTokens: messageId => parseDocTokens(sceneDocOf(getContext().chat[messageId])),
         cancel(messageId) {
             if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }
             inflight.get(messageId)?.abort();

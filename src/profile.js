@@ -13,6 +13,12 @@ export const PROFILE_SHOTS = ['portrait', 'bust', 'full'];
 const NSFW_KEYS = new Set(['nsfw', 'nude', 'naked', 'lewd']);
 /** Detail keys that only make sense when the framing shows the body / the back. */
 const BODY_KEYS = new Set(['back', 'body', 'legs', 'feet', 'tail']);
+/**
+ * Users name their explicit details freely (breasts, pussy, cock, buttocks...) - the key alone is not enough for the
+ * SFW switch. A detail is explicit when its key OR its text contains genital / sexual vocabulary.
+ */
+const NSFW_WORDS = /\b(nipples?|areolae?|breasts?|boobs?|tits?|cleavage|pussy|vagina|vulva|labia|clit(oris)?|anus|asshole|butt(ocks)?|ass|cock|dick|penis|balls|testicles|scrotum|foreskin|erect(ion)?|aroused|arousal|cum|semen|orgasm|sex|nude|naked|topless|bottomless|underwear|lingerie|panties|bra|thong|pubic|genitals?|crotch|thighs? gap|camel ?toe)\b/i;
+export const isExplicitFacet = f => NSFW_KEYS.has(f.key) || NSFW_WORDS.test(String(f.key ?? '')) || NSFW_WORDS.test(String(f.text ?? ''));
 
 export const DEFAULT_PROFILE_SYSTEM = `You write ONE image prompt for the PROFILE PICTURE (avatar) of a roleplay character. You receive the person's BASE LOOK (their fixed appearance as written by the user), their stored DETAILS (outfit, face, body, marks...), an optional STYLE and the requested FRAMING. The picture shows this person ALONE, clearly recognisable, as a character portrait - no story moment, no other people.
 Rules:
@@ -44,7 +50,7 @@ const shotOf = shot => PROFILE_SHOTS.includes(shot) ? shot : 'portrait';
 export function profileFacets(entity, { shot = 'portrait', sfw = true } = {}) {
     const s = shotOf(shot);
     return (entity?.facets ?? []).filter(f => {
-        if (sfw && NSFW_KEYS.has(f.key)) return false;
+        if (sfw && isExplicitFacet(f)) return false;
         if (s === 'portrait' && BODY_KEYS.has(f.key)) return false;
         return true;
     });
@@ -91,12 +97,13 @@ const SHOT_WORDS = {
         bust: 'upper body, cowboy shot, from the waist up, hands visible',
         full: 'full body, wide shot, standing, from head to toe, feet visible, from a distance',
     },
-    natural: { portrait: 'close-up head-and-shoulders portrait', bust: 'upper-body portrait', full: 'full-body portrait' },
+    natural: { portrait: 'close-up head-and-shoulders portrait', bust: 'upper-body shot', full: 'full-body shot' },
 };
+// Opens the prose draft right after the shot words, BEFORE the base look (a 700-char look in front buried it).
 const FRAME_NOTE = {
-    portrait: 'The face fills the frame, nothing below the chest.',
-    bust: 'Framed from the waist up, hands visible.',
-    full: 'Standing, seen from a distance from head to toe, the feet inside the frame.',
+    portrait: 'the face fills the frame, nothing below the chest',
+    bust: 'framed from the waist up, hands visible',
+    full: 'standing, seen from a distance from head to toe, the feet inside the frame',
 };
 
 /**
@@ -110,12 +117,12 @@ export function profileDraft(a) {
     const facets = profileFacets(e, { shot, sfw: a.sfw !== false }).map(f => f.text);
     if (natural) {
         const base = e.natural || e.tags || e.name || 'a person';
-        const parts = [`A ${SHOT_WORDS.natural[shot]} of ${e.name || 'the character'}: ${base}.`, FRAME_NOTE[shot]];
+        const parts = [`A ${SHOT_WORDS.natural[shot]} of ${e.name || 'the character'}, ${FRAME_NOTE[shot]}. ${base}.`];
         if (facets.length) parts.push(`${facets.join('. ')}.`);
-        parts.push('Alone, looking at the viewer with a calm expression, simple soft background, flattering portrait lighting, sharp focus on the face.');
+        parts.push(`Alone, looking at the viewer with a calm expression, simple soft background, ${shot === 'portrait' ? 'flattering portrait lighting, sharp focus on the face' : 'even soft lighting, the whole figure in sharp focus'}${a.sfw !== false ? ', fully clothed' : ''}.`);
         return parts.join(' ').replace(/\.\./g, '.').replace(/\s{2,}/g, ' ').trim();
     }
     const base = e.tags || e.natural || '';
-    return ['solo', SHOT_WORDS.tags[shot], 'looking at viewer', base, ...facets, 'simple background', 'soft lighting', 'sharp focus']
+    return ['solo', SHOT_WORDS.tags[shot], 'looking at viewer', a.sfw !== false ? 'sfw, fully clothed' : '', base, ...facets, 'simple background', 'soft lighting', 'sharp focus']
         .map(s => String(s).trim()).filter(Boolean).join(', ');
 }

@@ -39,6 +39,9 @@ export function createEntity(kind, partial = {}) {
         natural: String(partial.natural ?? '').trim(),  // natural-language description
         negative: String(partial.negative ?? '').trim(),
         facets: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.facets), // [{key:'back', text:'...'}] referenced as $keyword.back
+        // World = places, side characters (NPCs) and recurring items of this person's story ($keyword.apartment,
+        // $keyword.npc_william). Same token syntax as Details, kept apart so the look stays short.
+        world: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.world),
         loras: splitList(partial.loras),               // ["<lora:x:0.8>", ...]
         loraPosition: LORA_POSITIONS.includes(partial.loraPosition) ? partial.loraPosition : 'front',
         // Binding = "auto-load this entity when that chat / card / persona is open".
@@ -125,11 +128,11 @@ export function resolveEntities(settings, { text, chatId, charAvatar, personaAva
     return { characters, personas, style };
 }
 
-/** Roster text handed to the planner LLM (keyword, who they are, available $keyword.detail tokens). */
-export function rosterText(settings, { chatId, charAvatar, personaAvatar }) {
+/** Roster text handed to the step-2 LLM: keyword, base look, every Details / World entry as "token: text" (see rosterLine). */
+export function rosterText(settings, { chatId, charAvatar, personaAvatar }, dialect = 'tags') {
     const ident = { chatId, charAvatar, personaAvatar };
     const lines = [];
-    const add = (label, list) => { for (const e of list) lines.push(rosterLine(e, label)); };
+    const add = (label, list) => { for (const e of list) lines.push(rosterLine(e, label, dialect)); };
     const d = settings.data;
     add('character', d.characters.filter(e => isBound(e, ident)));
     add('user persona', d.personas.filter(e => isBound(e, ident)));
