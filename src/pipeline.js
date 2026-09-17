@@ -16,6 +16,17 @@ import { clamp } from './util.js';
 /** @typedef {{ url:string, scene:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} TestRecord */
 
 const MAX_TEST_IMAGES = 60;
+/** Per-step stopwatch: `const tm = timer(); ...; tm.lap('scene'); ...; tm.summary()` -> "scene 38s · prompts 12s · render 21s". */
+function timer() {
+    const laps = [];
+    let t0 = Date.now();
+    return {
+        lap(name) { const now = Date.now(); laps.push([name, now - t0]); t0 = now; return laps[laps.length - 1][1]; },
+        summary() { return laps.map(([n, ms]) => `${n} ${fmtMs(ms)}`).join(' · '); },
+        total() { return laps.reduce((a, [, ms]) => a + ms, 0); },
+    };
+}
+const fmtMs = ms => ms >= 10000 ? `${Math.round(ms / 1000)}s` : `${(ms / 1000).toFixed(1)}s`;
 // Regenerate keeps the replaced image as an older VERSION of the same slot (rec.history, newest first).
 const MAX_VERSIONS = 8;
 const stripHistory = r => { const { history, ...rest } = r; return rest; };
@@ -226,9 +237,12 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const backend = backends.active();
         const params = effectiveParams(settings, backend.id);
         status('rendering…');
+        const t0 = Date.now();
         const b64 = await backend.generate({ prompt, negative, params }, signal);
+        const t1 = Date.now();
         const url = safeImageUrl(await saveImage(b64, ctx.characters?.[ctx.characterId]?.name || 'IF_Imgen'));
-        return { url, backend: backend.id, model: params.model ?? '' };
+        log(`render: backend ${fmtMs(t1 - t0)} (${backend.id} ${params.model || ''} ${params.width}x${params.height} ${params.steps} steps) · save ${fmtMs(Date.now() - t1)}`);
+        return { url, backend: backend.id, model: params.model ?? '', ms: t1 - t0 };
     }
 
     /** Render one already-compiled shot and build its record. */
@@ -287,6 +301,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         begin(messageId, controller);
         const status = s => { log(`#${messageId} ${s}`); note(s); opt.onStatus?.(s); };
         const originalText = msg.mes;
+        const tm = timer();
         try {
             // Step 1: scene document (stored on the message, re-read by the next reply's planner).
             const context = contextText(ctx, messageId, g.contextMessages);
@@ -295,23 +310,25 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if (!setting) {
                 status('writing scene document…');
                 setting = await writeSceneDoc(ctx, messageId, { paragraphs, context }, controller.signal);
-                log(`#${messageId} scene document`, setting);
+                log(`#${messageId} scene document (${fmtMs(tm.lap('scene'))}, ${setting.length} chars)`, setting);
             }
 
             // Step 2: translate the document into N prompts (the translator also picks the paragraphs).
             status('writing prompts…');
             const plan = await planShots(ctx, { paragraphs, count, sceneDoc: setting, presetId: opt.presetId, context }, controller.signal);
-            log('plan', plan);
+            log(`plan (${fmtMs(tm.lap('prompts'))})`, plan);
 
             // Step 3 (mode 'refine'): ONE batch refine call for ALL images of this reply.
             if (g.mode === 'refine') status(`refining ${plan.length} prompt${plan.length > 1 ? 's' : ''} in one call…`);
             const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting });
+            if (g.mode === 'refine') tm.lap('refine');
             compiled.forEach((c, i) => logCompiled(c, ` #${i + 1}`));
 
             const made = [];
             for (let i = 0; i < plan.length; i++) {
                 status(`image ${i + 1}/${plan.length} (paragraph ${plan[i].p})…`);
                 made.push(await renderCompiled(ctx, { scene: plan[i].prompt, p: plan[i].p, setting }, compiled[i], controller.signal, status));
+                tm.lap(`image ${i + 1}`);
             }
 
             // Stale check: the message may have been swiped/edited while generating.
@@ -321,8 +338,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             records(msg).push(...made);
             setMessageText(ctx, messageId, insertAfterParagraphs(baseText, paragraphs, made.map(r => ({ p: r.p, snippet: imageSnippet(r.url) }))));
             await ctx.saveChat();
-            status(`done (${made.length} image${made.length > 1 ? 's' : ''})`);
-            return { generated: made.length };
+            status(`done (${made.length} image${made.length > 1 ? 's' : ''}) in ${fmtMs(tm.total())} — ${tm.summary()}`);
+            return { generated: made.length, ms: tm.total() };
         } catch (e) {
             if (e?.name === 'AbortError') { status('cancelled'); return { skipped: 'cancelled' }; }
             status(`error: ${e.message}`);
@@ -350,23 +367,28 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const controller = new AbortController();
         begin(messageId, controller);
         const status = s => { log(`#${messageId} regen ${s}`); note(s); onStatus?.(s); };
+        const tm = timer();
         try {
+            const had = Boolean(sceneDocOf(msg));
             const setting = await sceneDocFor(ctx, messageId, { paragraphs, signal: controller.signal, status });
+            if (!had && setting) tm.lap('scene');
             let useScene = edited;
             if (!useScene && para && setting) {
                 status('writing prompt…');
                 try { useScene = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true }, controller.signal))[0]?.prompt ?? ''; }
                 catch (e) { if (e?.name === 'AbortError') throw e; log('regen: translation failed, reusing the stored prompt', e.message); }
+                tm.lap('prompt');
             }
             useScene ||= String(rec?.scene ?? '').trim();
             const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting }, controller.signal, status);
+            tm.lap(settings.generate.mode === 'refine' ? 'refine+image' : 'image');
             if (rec) fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
             const list = records(msg);
             const i = list.findIndex(r => r.url === url);
             if (i >= 0) list[i] = fresh; else list.push(fresh);
             setMessageText(ctx, messageId, replaceImageUrl(msg.mes, url, fresh.url));
             await ctx.saveChat();
-            status('done');
+            status(`done in ${fmtMs(tm.total())} — ${tm.summary()}`);
             return fresh;
         } catch (e) {
             if (e?.name === 'AbortError') { status('cancelled'); return null; }
@@ -400,9 +422,12 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const todo = list.filter(r => paraOf(r) || String(r.scene ?? '').trim());
         let regenerated = 0;
         const skipped = list.length - todo.length;
+        const tm = timer();
         try {
             if (!todo.length) { status('done (0)'); return { regenerated, skipped }; }
+            const had = Boolean(sceneDocOf(msg));
             const setting = await sceneDocFor(ctx, messageId, { fresh: newScene, paragraphs, signal: controller.signal, status });
+            if ((newScene || !had) && setting) tm.lap('scene');
             // Step 2 for every slot that still has its paragraph; slots without one keep their stored prompt.
             const prompts = todo.map(r => String(r.scene ?? '').trim());
             const slots = todo.map((r, i) => ({ i, para: paraOf(r) })).filter(x => x.para);
@@ -412,10 +437,12 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
                     const plan = await planShots(ctx, { paragraphs: slots.map(x => x.para), count: slots.length, sceneDoc: setting, fixed: true }, controller.signal);
                     for (const x of slots) { const hit = plan.find(y => y.p === x.para.index); if (hit) prompts[x.i] = hit.prompt; }
                 } catch (e) { if (e?.name === 'AbortError') throw e; log('regen-all: translation failed, reusing the stored prompts', e.message); }
+                tm.lap('prompts');
             }
             if (prompts.some(p => !p)) throw new Error('No prompt for one of the images — use "Edit & regenerate" on it.');
             if (settings.generate.mode === 'refine') status(`refining ${todo.length} prompt${todo.length > 1 ? 's' : ''} in one call…`);
             const compiled = await compileScenes(ctx, prompts, backends.active().id, controller.signal, { setting });
+            if (settings.generate.mode === 'refine') tm.lap('refine');
             for (let i = 0; i < todo.length; i++) {
                 const rec = { ...todo[i], scene: prompts[i] };
                 status(`image ${i + 1}/${todo.length}…`);
@@ -426,10 +453,11 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
                 if (j >= 0) all[j] = fresh; else all.push(fresh);
                 setMessageText(ctx, messageId, replaceImageUrl(msg.mes, rec.url, fresh.url));
                 regenerated++;
+                tm.lap(`image ${i + 1}`);
             }
             await ctx.saveChat();
-            status(`done (${regenerated})`);
-            return { regenerated, skipped };
+            status(`done (${regenerated}) in ${fmtMs(tm.total())} — ${tm.summary()}`);
+            return { regenerated, skipped, ms: tm.total() };
         } catch (e) {
             if (e?.name === 'AbortError') { status('cancelled'); return { regenerated, skipped, cancelled: true }; }
             status(`error: ${e.message}`);

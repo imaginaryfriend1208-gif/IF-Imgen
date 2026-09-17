@@ -45,7 +45,7 @@ export function createLlm({ settings, getContext }) {
         return d?.choices?.[0]?.message?.content ?? '';
     }
 
-    /** Last few requests, newest last: { at, mode, target, messages, response } — for the "Show last LLM request" button. */
+    /** Last few requests, newest last: { at, mode, target, messages, response, ms } — for the "Show last LLM request" button. */
     const history = [];
 
     return {
@@ -60,11 +60,13 @@ export function createLlm({ settings, getContext }) {
                 at: new Date().toISOString(),
                 mode: cfg().mode,
                 target: cfg().mode === 'custom' ? cfg().custom.model : 'profile:' + cfg().profileId,
-                messages, response: '',
+                messages, response: '', ms: 0,
             };
             history.push(rec);
             if (history.length > 6) history.shift();
+            const t0 = Date.now();
             const text = cfg().mode === 'custom' ? await viaCustom(messages, signal) : await viaProfile(messages, signal);
+            rec.ms = Date.now() - t0;
             rec.response = String(text ?? '').trim();
             return rec.response;
         },
