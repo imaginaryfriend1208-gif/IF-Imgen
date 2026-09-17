@@ -68,6 +68,9 @@ function joinProse(...parts) {
  *   merged=true: `scene` already contains the cast (refine mode) -> character/persona fragments are NOT prepended;
  *   their LoRAs and negatives still apply. Quality prefix and style are always handled here.
  *   dialect: effective dialect (preset-forced or global); defaults to settings.generate.dialect.
+ *   sceneFirst=true: the scene opens the prompt and the style follows it (profile images: the framing sentence -
+ *   full body, feet visible - must be the first thing the model reads; behind a long style paragraph it is lost
+ *   and every framing comes out as a head shot). Chat images keep the usual order.
  *   natural: entity / style fragments go through softenTags(), parts are joined as sentences, no quality prefix;
  *   the negative is still sent unless disabled (Krea users turn it off in Generate).
  * @returns {{ prompt:string, negative:string }}
@@ -88,24 +91,16 @@ export function compilePrompt(a) {
     if (natural) {
         // Prose: LoRA tags stay as separate tokens (the backend strips them into nodes); everything else is sentences.
         const loras = [...lorasAt(all, 'front'), ...lorasAt(all, 'after_style'), ...lorasAt(all, 'end')].join(' ');
-        const body = joinProse(
-            styleList.map(pick),
-            a.merged ? [] : a.characters.map(pick),
-            a.merged ? [] : a.personas.map(pick),
-            scene,
-        );
+        const cast = [a.merged ? [] : a.characters.map(pick), a.merged ? [] : a.personas.map(pick)];
+        const body = a.sceneFirst
+            ? joinProse(scene, ...cast, styleList.map(pick))
+            : joinProse(styleList.map(pick), ...cast, scene);
         prompt = [loras, body].filter(Boolean).join(' ');
     } else {
-        prompt = joinTags(
-            lorasAt(all, 'front'),
-            useQuality ? g.qualityPrefix : '',
-            styleList.map(pick),
-            lorasAt(all, 'after_style'),
-            a.merged ? [] : a.characters.map(pick),
-            a.merged ? [] : a.personas.map(pick),
-            scene,
-            lorasAt(all, 'end'),
-        );
+        const cast = [a.merged ? [] : a.characters.map(pick), a.merged ? [] : a.personas.map(pick)];
+        prompt = a.sceneFirst
+            ? joinTags(lorasAt(all, 'front'), useQuality ? g.qualityPrefix : '', scene, styleList.map(pick), lorasAt(all, 'after_style'), ...cast, lorasAt(all, 'end'))
+            : joinTags(lorasAt(all, 'front'), useQuality ? g.qualityPrefix : '', styleList.map(pick), lorasAt(all, 'after_style'), ...cast, scene, lorasAt(all, 'end'));
     }
     // Negative disabled -> send nothing at all (entity negatives included), for models that take no negative.
     const useNeg = prefs.useNegative !== '' ? prefs.useNegative : g.useNegative !== false;

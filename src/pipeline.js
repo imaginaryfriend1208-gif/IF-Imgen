@@ -673,7 +673,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         // merged: the draft already carries the base look (LLM folded it in / profileDraft() starts with it) -> the compiler
         // must not prepend the entity tags again; LoRAs, negatives, style and quality prefix still apply.
         const ents = { characters: kind === 'characters' ? [e] : [], personas: kind === 'personas' ? [e] : [], style };
-        const { prompt, negative } = compilePrompt({ scene: draft, ...ents, settings, backend: backends.active().id, merged: true, dialect: opt.dialect });
+        // sceneFirst: the framing words open the final prompt, the style follows (a long style paragraph in front
+        // made bust / full come out as head shots on prose models).
+        const { prompt, negative } = compilePrompt({ scene: draft, ...ents, settings, backend: backends.active().id, merged: true, dialect: opt.dialect, sceneFirst: true });
         return { draft, prompt, negative, source, shot: opt.shot, sfw: opt.sfw };
     }
 
@@ -699,7 +701,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if (edited) {
                 const style = settings.data.styles.find(s => s.id === settings.defaultStyleId) ?? null;
                 const ents = { characters: kind === 'characters' ? [e] : [], personas: kind === 'personas' ? [e] : [], style };
-                const c = compilePrompt({ scene: edited, ...ents, settings, backend: backends.active().id, merged: true, dialect: effectiveDialect(settings) });
+                const c = compilePrompt({ scene: edited, ...ents, settings, backend: backends.active().id, merged: true, dialect: effectiveDialect(settings), sceneFirst: true });
                 p = { draft: edited, prompt: c.prompt, negative: c.negative, source: 'edited', shot: shot ?? e.profile.shot, sfw: sfw ?? e.profile.sfw };
             } else {
                 if (useLlm) status('writing portrait prompt…');

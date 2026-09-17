@@ -540,6 +540,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             gen.classList.toggle('danger', running); gen.classList.toggle('primary', !running);
             gen.title = gen.querySelector('span').textContent;
             for (const c of ['.ent-profile-edit', '.ent-profile-preview']) q(c).disabled = running || !saved;
+            // No job for this entry any more -> a status line still saying "generating … rendering…" is stale; clear it.
+            if (!running) { const n = q('.ent-profile-status'); if (n.textContent.startsWith(t('st_profile_running'))) { n.textContent = ''; n.className = 'ifimgen-status'; } }
             q('.ent-profile-open').disabled = !cur;
             q('.ent-profile-delete').disabled = running || !cur;
             const det = q('.ent-profile-prompt');
