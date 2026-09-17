@@ -4,7 +4,7 @@ import { DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 import { DEFAULT_PROFILE_SYSTEM } from './profile.js';
 
 export const MODULE = 'IF_Imgen';
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 
 /** Per-model generation parameters (one profile per model, per backend). */
 export const PARAM_KEYS = ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height'];
@@ -39,7 +39,7 @@ export function defaultSettings() {
                 mode: 'st_profile', // 'st_profile' | 'custom'
                 profileId: '',
                 custom: { baseUrl: '', apiKey: '', model: '' },
-                maxTokens: 2000,    // shared by the 3 steps; the scene document (several people + layout) needs the room
+                maxTokens: 8000,    // shared by the 3 steps; the scene document (several people + layout) needs the room
                 temperature: 0.7,
             },
         },
@@ -122,7 +122,9 @@ export function migrate(s) {
         if (typeof s.generate.refineSystem === 'string' && s.generate.refineSystem.includes('SCENE SETTING')) s.generate.refineSystem = DEFAULT_REFINE_SYSTEM;
     }
     // The scene document is long; the old 1200-token default truncated it. Only the untouched old default is raised.
-    if (s.connection?.llm && s.connection.llm.maxTokens === 1200) s.connection.llm.maxTokens = 2000;
+    // v4: step 2 writes two versions per shot (raw + final) and reasoning models spend tokens before the JSON -> lift small caps.
+    if (from < 4 && s.connection?.llm && Number(s.connection.llm.maxTokens) > 0 && Number(s.connection.llm.maxTokens) < 6000) s.connection.llm.maxTokens = 8000;
+    // v0.13: step 2 writes two versions per shot (raw + final) -> old caps of 1200-2000 tokens truncate the JSON.
     s.version = SETTINGS_VERSION;
     return s;
 }

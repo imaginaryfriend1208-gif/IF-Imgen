@@ -40,7 +40,42 @@ export function facetsText(list) {
 
 // Same normalization as keywords: strip $, diacritics (đ -> d), lowercase, spaces -> underscore.
 const normKey = k => normalizeKeyword(k);
-const facetOf = (e, key) => (e.facets ?? []).find(f => f.key === key) ?? null;
+// A token resolves against the entity's Details first, then its World (places, NPCs, recurring items kept apart from the look).
+const facetOf = (e, key) => (e.facets ?? []).find(f => f.key === key) ?? (e.world ?? []).find(f => f.key === key) ?? null;
+/** Ad-hoc token defined in a scene document's TOKENS section ($seb.outfit_work: ...) for entity e. */
+const adhocOf = (e, key, adhoc) => (adhoc ?? []).find(t => t.facet === key && entityByKey([e], t.key)) ?? null;
+
+const TOKENS_HEAD_RE = /^\s*TOKENS\s*:/i;
+const TOKEN_DEF_RE = /^\s*\$?([\p{L}][\p{L}\p{N}_\-]*)\.([\p{L}\p{N}_\-]+)\s*:\s*(.+?)\s*$/u;
+
+/**
+ * Split a scene document into its TOKENS section (ad-hoc token definitions written by the step-1 LLM) and the rest.
+ * The section starts with a "TOKENS:" line and ends at the first blank line or the next SECTION: header.
+ * @returns {{ tokens:{key:string,facet:string,text:string}[], head:string, body:string }}
+ *   head - the TOKENS lines verbatim ('' when absent), body - everything else
+ */
+export function splitDocTokens(doc) {
+    const lines = String(doc ?? '').split(/\r?\n/);
+    const start = lines.findIndex(l => TOKENS_HEAD_RE.test(l));
+    if (start < 0) return { tokens: [], head: '', body: String(doc ?? '') };
+    let end = start + 1;
+    while (end < lines.length && lines[end].trim() && !/^[A-Z][A-Z /]+:/.test(lines[end].trim())) end++;
+    const head = lines.slice(start, end);
+    const tokens = [];
+    for (const l of head.slice(1)) {
+        const m = l.match(TOKEN_DEF_RE);
+        if (!m) continue;
+        const key = normalizeKeyword(m[1]), facet = normKey(m[2]);
+        if (!key || !facet) continue;
+        const prev = tokens.find(t => t.key === key && t.facet === facet);
+        if (prev) prev.text = m[3]; else tokens.push({ key, facet, text: m[3] });
+    }
+    const body = [...lines.slice(0, start), ...lines.slice(end)].join('\n').replace(/^\n+/, '');
+    return { tokens, head: head.join('\n'), body };
+}
+
+/** Ad-hoc tokens of a scene document (see splitDocTokens). */
+export function parseDocTokens(doc) { return splitDocTokens(doc).tokens; }
 const RELATIVE = { char: 'characters', character: 'characters', user: 'personas', persona: 'personas' };
 // Unicode-aware so "$Dư_Tô.lưng" written by the LLM still resolves to $du_to.lung.
 const TOKEN_RE = /\$([\p{L}][\p{L}\p{N}_\-]*)(?:\.([\p{L}\p{N}_\-]+))?/gu;
@@ -58,14 +93,15 @@ function splitCamelRelative(key) {
 
 /**
  * Expand tokens in a planner scene (or in a scene document).
- * @param {{ scene:string, characters:object[], personas:object[], keepUnknown?:boolean }} a
+ * @param {{ scene:string, characters:object[], personas:object[], keepUnknown?:boolean, adhoc?:{key:string,facet:string,text:string}[] }} a
  *   keepUnknown - leave unresolved tokens in the text instead of dropping them (scene documents: never lose a line)
+ *   adhoc       - tokens defined in the scene document's TOKENS section (parseDocTokens); resolved after Details / World
  * @returns {{ text:string, used: Map<string, Set<string>>, unknown:string[] }}
  *   text    - scene with tokens replaced (entity -> name, facet -> facet text)
  *   used    - entityId -> facet keys referenced (empty set = only the base look)
  *   unknown - tokens that could not be resolved (dropped from text unless keepUnknown)
  */
-export function expandScene({ scene, characters = [], personas = [], keepUnknown = false }) {
+export function expandScene({ scene, characters = [], personas = [], keepUnknown = false, adhoc = [] }) {
     const used = new Map();
     const unknown = [];
     const last = { characters: characters[0] ?? null, personas: personas[0] ?? null };
@@ -83,7 +119,7 @@ export function expandScene({ scene, characters = [], personas = [], keepUnknown
         }
         if (!e) { unknown.push(m); return keepUnknown ? m : ''; }
         if (!f) { mark(e); return e.name || ''; }
-        const fx = facetOf(e, f);
+        const fx = facetOf(e, f) ?? adhocOf(e, f, adhoc);
         if (!fx) { unknown.push(m); mark(e); return keepUnknown ? m : (e.name || ''); }
         mark(e, f);
         return fx.text;
@@ -96,8 +132,12 @@ export function expandScene({ scene, characters = [], personas = [], keepUnknown
  * $keyword.detail its stored text; tokens that do not resolve stay as written (nothing is lost). The document
  * itself is stored WITH tokens so later edits of an entity's details reach every future regenerate.
  */
-export function expandSceneDoc({ doc, characters = [], personas = [] }) {
-    return expandScene({ scene: doc, characters, personas, keepUnknown: true });
+export function expandSceneDoc({ doc, characters = [], personas = [], adhoc = [] }) {
+    // The TOKENS section is kept verbatim (its lines ARE the definitions); the body is expanded with them.
+    const { tokens, head, body } = splitDocTokens(doc);
+    const all = [...tokens, ...(adhoc ?? []).filter(a => !tokens.some(t => t.key === a.key && t.facet === a.facet))];
+    const ex = expandScene({ scene: body, characters, personas, keepUnknown: true, adhoc: all });
+    return { ...ex, text: [head, ex.text].filter(Boolean).join('\n'), tokens: all };
 }
 
 function tidy(s) {
@@ -105,30 +145,37 @@ function tidy(s) {
 }
 
 /** One line per entity for the planner roster: keyword, who they are, available details. */
-export function rosterLine(e, label) {
-    const desc = (e.natural || e.tags || '').slice(0, 160);
-    const facets = (e.facets ?? []).map(f => `$${e.keyword}.${f.key}`);
-    return `$${e.keyword} — ${label}: ${e.name}${desc ? ` — ${desc}` : ''}${facets.length ? `\n    details: ${facets.join(', ')}` : ''}`;
+export function rosterLine(e, label, dialect = 'tags') {
+    const look = String((dialect === 'natural' ? (e.natural || e.tags) : (e.tags || e.natural)) || '').trim();
+    const tok = list => (list ?? []).map(f => `    $${e.keyword}.${f.key}: ${f.text}`);
+    const details = tok(e.facets), world = tok(e.world);
+    return [
+        `$${e.keyword} — ${label}: ${e.name}${look ? ` — base look: ${look}` : ''}`,
+        details.length ? `  details:\n${details.join('\n')}` : '',
+        world.length ? `  world (places, side characters, recurring items):\n${world.join('\n')}` : '',
+    ].filter(Boolean).join('\n');
 }
 
 // ---------------------------------------------------------------- scene document (step 1)
 
 export const DEFAULT_SCENE_SYSTEM = `You are the scene planner and continuity keeper of an illustrated roleplay. You read the latest reply (numbered paragraphs), the earlier chat context, the CAST (known people with their stored details) and the PREVIOUS SCENE DOCUMENTS written for earlier replies, and you write ONE SCENE DOCUMENT for this reply. Every image prompt of this reply is written from this document only, and the document is read again when the next reply is planned, so it must be precise, complete and consistent with the previous documents unless the text clearly changes something.
-TOKENS: the CAST lists each known person as $keyword and each stored detail as $keyword.detail followed by its text (e.g. $yenka.outfit: white button-up shirt). Refer to a known person by $keyword or by name. When a stored detail IS what is on show or worn, write the TOKEN instead of copying its text, then add only what differs right now (e.g. WEARING: $yenka.outfit, unbuttoned, sleeves rolled up, barefoot). When the current clothing is NOT the stored outfit, describe it in words instead. Tokens are replaced by their stored text automatically later. Never write a token that is not listed and never guess what a detail contains.
+TOKENS: the CAST lists each known person as $keyword and each stored entry as $keyword.entry followed by its text (details = the person's own look and clothes; world = places, side characters and recurring items that belong to that person's story). Refer to a known person by $keyword or by name. When a stored entry IS what is on show, worn or where the scene happens, write the TOKEN instead of copying its text, then add only what differs right now (unbuttoned, soaked, pushed off one shoulder). NEW TOKENS: when this reply shows something that will come back later and has NO stored token yet - a new outfit or hairstyle of a known person, a side character (NPC) who is present, a recurring place or vehicle or pet tied to a known person - DEFINE it once in a TOKENS section at the very top of the document, one per line, as $keyword.new_key: <full visual description in words>, and then use that token below. Name keys in lowercase snake_case after the owner: $seb.outfit_work, $yen.hair_bun, $seb.npc_william, $seb.chinatown_alley, $seb.car. An NPC token holds everything an image model needs (apparent age, build, hair, face, clothes). Never redefine a stored entry; reuse a token defined in a PREVIOUS DOCUMENT with the same name and keep its text unless the story clearly changes it (then define the new state, e.g. $seb.outfit_work_wet). Do not define tokens for one-off props.
 Write plain text in these sections, short factual lines, in this order:
+TOKENS: (only when needed - the new token definitions described above; omit the section when there is nothing new)
 SCENE: what happens in this reply in 2-3 sentences; the mood; the visual style or genre feel (quiet domestic drama, tense noir, warm slice of life...).
 LOCATION: indoors or outdoors; the type of place (bedroom, kitchen, alley, forest road...); time of day; weather; the light sources and the quality of the light (colour, direction, intensity).
 LAYOUT: the room or area in detail - size, walls / floor / ceiling or ground and sky, doors and windows, every notable piece of furniture and prop and WHERE it is (bed against the left wall, nightstand with a lit lamp on its right, window behind the bed, clothes on the floor by the door...). When the place is the same as in a previous document, carry its layout over and only add what is new.
-PEOPLE PRESENT: how many people are physically in the scene, then their names. People only mentioned, remembered or on the phone are NOT present.
+PEOPLE PRESENT: how many people are physically in the scene, then their names; a side character is listed by its token ($seb.npc_william). People only mentioned, remembered or on the phone are NOT present.
 For EACH person present, one block:
 - <name>
   WEARING: every garment right now with its colour, material or pattern when known, and its state (buttoned, unbuttoned, soaked, torn, pushed off one shoulder, removed and lying where...). Include footwear and accessories. If the CAST lists an outfit detail for that person, write its token ($keyword.outfit) plus the current state unless the text clearly says they wear something else. If undressed, say exactly what is on and what is off.
   EXPRESSION: the face and the gaze (what or whom they look at), the emotion as it shows on the face.
   DOING: what they do over the course of this reply, in order, with the paragraph number of each action ([3] sits on the edge of the bed...).
+  Sexual content is written as plainly as clothing: name the act (vaginal sex, fellatio, fingering...), the position, which body parts touch or penetrate, what is exposed, fluids present. "They make love" is not a scene fact - "he penetrates her from behind, her chest pressed to the table, his left hand gripping her hip" is.
   POSE / POSITION: body position and where they are relative to the others and to the layout (standing by the window, kneeling at the foot of the bed, facing away...).
   If clothing changes during the reply, note the change under DOING with its paragraph number and put the FINAL state under WEARING.
 CONTINUITY: what stays as in the previous document and what changed (moved to another room, undressed, a new prop, time passed, someone left or arrived).
-Rules: state only what the text, the cast and the previous documents say or clearly imply; never invent new people; never describe fixed looks (hair colour, eyes, body, face, height) - those are attached automatically; never contradict a previous document unless this reply clearly changes it. No preamble, no markdown, no quotes.`;
+Rules: state only what the text, the cast and the previous documents say or clearly imply; never add people the text does not place in the scene (side characters who ARE in the text get an NPC token); never describe fixed looks (hair colour, eyes, body, face, height) - those are attached automatically; never contradict a previous document unless this reply clearly changes it. No preamble, no markdown, no quotes.`;
 
 /**
  * Build the scene-document messages (step 1, one call per message, shared by all its images).
@@ -141,7 +188,8 @@ export function buildScenePrompt(a) {
     // Each detail is shown as its token + text, so the planner can write the token and still knows what it means.
     const castBlock = cast.map(([e, label]) => {
         const facets = (e.facets ?? []).map(f => `  $${e.keyword}.${f.key}: ${f.text}`);
-        return `- ${e.name} (${label}) — token $${e.keyword}${facets.length ? `\n${facets.join('\n')}` : ''}`;
+        const world = (e.world ?? []).map(f => `  $${e.keyword}.${f.key}: ${f.text}`);
+        return `- ${e.name} (${label}) — token $${e.keyword}${facets.length ? `\n  details:\n${facets.join('\n')}` : ''}${world.length ? `\n  world (places, side characters, recurring items):\n${world.join('\n')}` : ''}`;
     });
     const prev = (a.previous ?? []).filter(x => x && String(x.text ?? '').trim());
     const prevBlock = prev.map((x, i) => `--- document ${i + 1} of ${prev.length}${i === prev.length - 1 ? ' (most recent)' : ''} ---\n${String(x.text).trim()}`).join('\n\n');
@@ -151,7 +199,7 @@ export function buildScenePrompt(a) {
         prev.length ? `PREVIOUS SCENE DOCUMENTS (continuity - keep what did not change):\n${prevBlock}` : 'PREVIOUS SCENE DOCUMENTS: (none - this is the first illustrated reply)',
         a.context ? `EARLIER CONTEXT:\n${a.context}` : '',
         `LATEST REPLY, NUMBERED PARAGRAPHS:\n${paraBlock}`,
-        'Write the scene document for the latest reply now (use the listed tokens for people and their stored details).',
+        'Write the scene document for the latest reply now (use the listed tokens for people and their stored entries; define new tokens at the top only for things that will recur).',
     ].filter(Boolean).join('\n\n');
     return { system, user };
 }

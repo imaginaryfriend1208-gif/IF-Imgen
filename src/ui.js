@@ -510,6 +510,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             if (isStyle) return;
             q('.ent-keyword').value = e.keyword; q('.ent-aliases').value = e.aliases.join(', ');
             q('.ent-facets').value = facetsText(e.facets);
+            q('.ent-world').value = facetsText(e.world);
             q('.ent-always').checked = e.bind.always;
             renderBind(e);
             renderProfile(e);
@@ -652,7 +653,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             return createEntity(kind, {
                 id: base?.id, profile: base?.profile, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
                 aliases: q('.ent-aliases').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value,
-                negative: q('.ent-negative').value, facets: q('.ent-facets').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
+                negative: q('.ent-negative').value, facets: q('.ent-facets').value, world: q('.ent-world').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
                 bind: { always: q('.ent-always').checked, chats: [...bindState.chats], characters: [...bindState.characters], personas: [...bindState.personas] },
             });
         }
@@ -740,6 +741,8 @@ function entityPanel({ kind, tab, label, icon, hint }) {
             <div class="ifimgen-row"><label>${t('lbl_natural')}</label><textarea class="text_pole ent-natural"></textarea></div>
             <div class="ifimgen-row"><label>${t('lbl_negative')}</label><input class="text_pole ent-negative" type="text"></div>
             <div class="ifimgen-row"><label>${t('lbl_details')}</label><textarea class="text_pole ent-facets" rows="5" placeholder="${escapeHtml(t('ph_details')).replaceAll('\n', '&#10;')}"></textarea></div>
+            <div class="ifimgen-row"><label>${t('lbl_world')}</label><textarea class="text_pole ent-world" rows="4" placeholder="${escapeHtml(t('ph_world')).replaceAll('\n', '&#10;')}"></textarea></div>
+            <div class="ifimgen-note">${t('note_world')}</div>
             <div class="ifimgen-note">${t('note_details', { keys: FACET_KEYS.join(', ') })}</div>
             <div class="ifimgen-row"><label>${t('lbl_loras')}</label><textarea class="text_pole ent-loras" placeholder="${escapeHtml(t('ph_loras'))}"></textarea></div>
             <div class="ifimgen-row"><label>${t('lbl_lorapos')}</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>

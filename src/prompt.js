@@ -50,6 +50,18 @@ export function softenTags(text) {
     return out.join(', ');
 }
 
+/** First sentences of a prose fragment up to ~max chars (cut at a sentence end, else at a comma, else hard). */
+export function clipProse(text, max = 220) {
+    const s = String(text ?? '').trim();
+    if (s.length <= max) return s;
+    const head = s.slice(0, max + 1);
+    const dot = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '));
+    if (dot >= max * 0.4) return head.slice(0, dot + 1);
+    const comma = head.lastIndexOf(', ');
+    if (comma >= max * 0.5) return head.slice(0, comma);
+    return head.slice(0, max).replace(/\s+\S*$/, '');
+}
+
 /** Join prose fragments into sentences: each non-empty part ends with a full stop. */
 function joinProse(...parts) {
     const out = [];
@@ -86,13 +98,16 @@ export function compilePrompt(a) {
 
     let prompt;
     if (natural) {
-        // Prose: LoRA tags stay as separate tokens (the backend strips them into nodes); everything else is sentences.
+        // Prose: the SCENE leads (subject + camera sentence first - that is what Flux / Krea weigh most), then the cast
+        // in one short clause each (only when the scene does not already carry the look), then the style trimmed to
+        // its opening sentences. Long style / look paragraphs placed first were dragging every image towards the
+        // style's reference painters and the cast's ethnic markers instead of the scene. LoRA tags stay as tokens.
         const loras = [...lorasAt(all, 'front'), ...lorasAt(all, 'after_style'), ...lorasAt(all, 'end')].join(' ');
         const body = joinProse(
-            styleList.map(pick),
-            a.merged ? [] : a.characters.map(pick),
-            a.merged ? [] : a.personas.map(pick),
             scene,
+            a.merged ? [] : a.characters.map(e => clipProse(pick(e), 220)),
+            a.merged ? [] : a.personas.map(e => clipProse(pick(e), 220)),
+            styleList.map(e => clipProse(pick(e), 350)),
         );
         prompt = [loras, body].filter(Boolean).join(' ');
     } else {

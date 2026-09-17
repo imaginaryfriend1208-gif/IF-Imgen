@@ -5,12 +5,12 @@ import assert from 'node:assert/strict';
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
 import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset, extractJsonArray, presetDialect, effectiveDialect } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
-import { compilePrompt, effectiveParams, modelParams, hasProfile, softenTags, modelPromptPrefs } from '../src/prompt.js';
+import { compilePrompt, effectiveParams, modelParams, hasProfile, softenTags, modelPromptPrefs, clipProse } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages, collectProfileImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
 import { abortable, createPipeline } from '../src/pipeline.js';
-import { parseFacets, facetsText, expandScene, expandSceneDoc, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM } from '../src/scene.js';
+import { parseFacets, facetsText, expandScene, expandSceneDoc, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM, splitDocTokens, parseDocTokens } from '../src/scene.js';
 import { rosterText, isBound } from '../src/entities.js';
 import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft, profileFacets, PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from '../src/profile.js';
@@ -106,9 +106,9 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     assert.ok(withDoc.user.includes('translate the SCENE DOCUMENT'));
     const noDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
     assert.ok(!noDoc.system.includes('SCENE DOCUMENT RULES') && !noDoc.system.includes('{{'));
-    assert.equal(defaultSettings().connection.llm.maxTokens, 2000);
-    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 1200 } } } }).connection.llm.maxTokens, 2000, 'old default raised');
-    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 900, 'user value kept');
+    assert.equal(defaultSettings().connection.llm.maxTokens, 8000);
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 1200 } } } }).connection.llm.maxTokens, 8000, 'old default raised');
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 8000, 'user value kept');
 });
 
 const s = defaultSettings();
@@ -251,9 +251,9 @@ test('expandScene: $kw.facet, $char.facet, $userOutfit forms; unknown tokens dro
 
 test('roster lists detail tokens so the planner knows what exists', () => {
     const line = rosterLine(yenka, 'user persona');
-    assert.ok(line.includes('$yenka') && line.includes('$yenka.outfit, $yenka.back'));
+    assert.ok(line.includes('$yenka') && line.includes('$yenka.outfit:') && line.includes('$yenka.back:'), 'roster lists details WITH their text: ' + line);
     const s3 = defaultSettings(); s3.data.personas.push(yenka);
-    assert.ok(rosterText(s3, {}).includes('details: $yenka.outfit'));
+    assert.ok(rosterText(s3, {}).includes('$yenka.outfit:'));
 });
 
 test('refine prompt: cast carries base look + only referenced details; style + expanded scene included', () => {
@@ -294,7 +294,7 @@ test('step 1 (scene document): sections, cast details, previous documents (oldes
     const st = buildScenePrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka], previous: [{ id: 3, text: 'DOC A' }, { id: 7, text: 'DOC B' }] });
     for (const k of ['SCENE:', 'LOCATION:', 'LAYOUT:', 'PEOPLE PRESENT:', 'WEARING:', 'EXPRESSION:', 'DOING:', 'POSE / POSITION:', 'CONTINUITY:']) assert.ok(st.system.includes(k), `section ${k}`);
     assert.ok(st.system.includes('colour') && st.system.includes('WHERE it is'), 'clothing colours + prop placement demanded');
-    assert.ok(st.system.includes('TOKENS:') && st.system.includes('$keyword.detail'), 'planner is told to write tokens');
+    assert.ok(st.system.includes('TOKENS:') && st.system.includes('$keyword.entry') && st.system.includes('NEW TOKENS'), 'planner is told to write tokens and may define new ones');
     assert.ok(st.user.includes('$yenka.outfit: white button-up shirt') && st.user.includes('token $rosario') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
     // Stored document keeps tokens; the downstream LLMs get words. Unknown tokens are kept, not dropped.
     const doc = 'PEOPLE PRESENT: 2 - $yenka, $rosario\n- $yenka\n  WEARING: $yenka.outfit, unbuttoned\n  POSE: back to viewer showing $yenka.back\n- $rosario\n  WEARING: $rosario.armor, dented';
@@ -335,7 +335,11 @@ test('compilePrompt natural (Krea): softened cast, sentences not comma lists, no
     assert.ok(!nat.prompt.includes('masterpiece'), 'no quality prefix in prose');
     assert.ok(nat.prompt.includes('a young woman, silver hair'), '1girl -> a young woman: ' + nat.prompt);
     assert.ok(nat.prompt.includes('<lora:lyna'), 'LoRA token kept');
-    assert.ok(/silver hair[^.]*\. /.test(nat.prompt) && nat.prompt.endsWith('viewer.'), 'fragments joined as sentences: ' + nat.prompt);
+    // Order for prose models: scene first, then the cast clause, then the style; every part closed as a sentence.
+    assert.ok(nat.prompt.indexOf('She leans on the railing') < nat.prompt.indexOf('a young woman, silver hair') && nat.prompt.indexOf('silver hair') < nat.prompt.indexOf('anime style'), 'scene -> cast -> style: ' + nat.prompt);
+    assert.ok(/viewer\. a young woman/.test(nat.prompt) && nat.prompt.endsWith('.'), 'fragments joined as sentences: ' + nat.prompt);
+    assert.equal(clipProse('First sentence here. Second one is longer and goes on. Third.', 30), 'First sentence here.');
+    assert.equal(clipProse('short', 30), 'short');
     assert.equal(softenTags('masterpiece, 1girl, (long_hair:1.2), {blue eyes}, [smile], score_9'), 'a young woman, long hair, blue eyes, smile');
     assert.equal(softenTags('A tall man with a scar. He wears a black coat, unbuttoned.'), 'A tall man with a scar. He wears a black coat, unbuttoned.');
     // effectiveDialect: preset forced dialect beats generate.dialect; plain presets follow the global one
@@ -377,9 +381,35 @@ test('model profile prompt prefs: dialect / negative per model beat the global s
     assert.ok(!off.includes('"ar"') && !off.includes('{{'));
 });
 
+test('scene document TOKENS section: parsed, kept verbatim, resolves in the body / prompts after Details and World; roster shows details + world with text; final beats raw', () => {
+    const doc = 'TOKENS:\n$seb.outfit_work: dark navy work shirt with the company patch\n$seb.npc_william: William, stocky man in his fifties, grey buzz cut\n\nSCENE: dinner\nPEOPLE PRESENT: 2 - Seb, $seb.npc_william\n- Seb\n  WEARING: $seb.outfit_work, sleeves rolled, $seb.back visible, at $seb.apartment';
+    const seb = createEntity('characters', { name: 'Sebastian', keyword: 'seb', natural: 'a tall man', facets: 'back: dragon tattoo', world: 'apartment: small flat 8B' });
+    assert.deepEqual(seb.world, [{ key: 'apartment', text: 'small flat 8B' }]);
+    const t = splitDocTokens(doc);
+    assert.equal(t.tokens.length, 2); assert.equal(t.tokens[1].facet, 'npc_william'); assert.ok(t.head.startsWith('TOKENS:')); assert.ok(t.body.startsWith('SCENE:'));
+    assert.deepEqual(splitDocTokens('SCENE: x').tokens, []);
+    const ex = expandSceneDoc({ doc, characters: [seb], personas: [] });
+    assert.ok(ex.text.startsWith('TOKENS:\n$seb.outfit_work:'), 'definitions kept verbatim');
+    assert.ok(ex.text.includes('WEARING: dark navy work shirt with the company patch, sleeves rolled, dragon tattoo visible, at small flat 8B'), ex.text);
+    assert.deepEqual(ex.unknown, []);
+    const shot = expandScene({ scene: '$seb in $seb.apartment wearing $seb.outfit_work beside $seb.npc_william, $seb.unknown_thing', characters: [seb], personas: [], adhoc: parseDocTokens(doc) });
+    assert.equal(shot.text, 'Sebastian in small flat 8B wearing dark navy work shirt with the company patch beside William, stocky man in his fifties, grey buzz cut, Sebastian');
+    assert.deepEqual(shot.unknown, ['$seb.unknown_thing']);
+    const line = rosterLine(seb, 'character', 'natural');
+    assert.ok(line.includes('base look: a tall man') && line.includes('$seb.back: dragon tattoo') && line.includes('world') && line.includes('$seb.apartment: small flat 8B'));
+    // step 1 cast block carries world entries and the NEW TOKENS rule; step 2 rules ask for "final"
+    const st = buildScenePrompt({ paragraphs: [{ index: 1, text: 'x' }], characters: [seb], personas: [] });
+    assert.ok(st.user.includes('$seb.apartment: small flat 8B') && st.system.includes('NEW TOKENS') && st.system.includes('TOKENS: (only when needed'));
+    // parsePlan keeps final
+    assert.deepEqual(parsePlan('[{"p":1,"prompt":"$seb x","final":"Sebastian, a tall man, x"}]', [1]), [{ p: 1, prompt: '$seb x', final: 'Sebastian, a tall man, x' }]);
+    // settings migration raises a small LLM cap
+    assert.equal(ensureSettings({ IF_Imgen: { version: 4, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 900, 'already v4: user choice kept');
+    assert.equal(defaultSettings().connection.llm.maxTokens, 8000);
+});
+
 test('planner rules mention detail tokens', () => {
     const { system } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', context: '', dialect: 'tags' });
-    assert.ok(system.includes('DETAILS:') && system.includes('$yenka.back'));
+    assert.ok(system.includes('TOKENS IN THE PROMPT:') && system.includes('"final"'));
 });
 
 test('binding: chat id / card avatar / persona avatar / always -- identifiers only', () => {

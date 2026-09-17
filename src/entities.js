@@ -39,6 +39,7 @@ export function createEntity(kind, partial = {}) {
         natural: String(partial.natural ?? '').trim(),  // natural-language description
         negative: String(partial.negative ?? '').trim(),
         facets: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.facets), // [{key:'back', text:'...'}] referenced as $keyword.back
+        world: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.world),   // places, NPCs, recurring items: $keyword.apartment, $keyword.npc_william
         loras: splitList(partial.loras),               // ["<lora:x:0.8>", ...]
         loraPosition: LORA_POSITIONS.includes(partial.loraPosition) ? partial.loraPosition : 'front',
         // Binding = "auto-load this entity when that chat / card / persona is open".
