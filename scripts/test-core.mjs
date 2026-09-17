@@ -9,7 +9,7 @@ import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
-import { parseFacets, facetsText, expandScene, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM } from '../src/scene.js';
+import { parseFacets, facetsText, expandScene, expandSceneDoc, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM } from '../src/scene.js';
 import { rosterText, isBound } from '../src/entities.js';
 import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
 
@@ -279,7 +279,17 @@ test('step 1 (scene document): sections, cast details, previous documents (oldes
     const st = buildScenePrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka], previous: [{ id: 3, text: 'DOC A' }, { id: 7, text: 'DOC B' }] });
     for (const k of ['SCENE:', 'LOCATION:', 'LAYOUT:', 'PEOPLE PRESENT:', 'WEARING:', 'EXPRESSION:', 'DOING:', 'POSE / POSITION:', 'CONTINUITY:']) assert.ok(st.system.includes(k), `section ${k}`);
     assert.ok(st.system.includes('colour') && st.system.includes('WHERE it is'), 'clothing colours + prop placement demanded');
-    assert.ok(st.user.includes('outfit: white button-up shirt') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
+    assert.ok(st.system.includes('TOKENS:') && st.system.includes('$keyword.detail'), 'planner is told to write tokens');
+    assert.ok(st.user.includes('$yenka.outfit: white button-up shirt') && st.user.includes('token $rosario') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
+    // Stored document keeps tokens; the downstream LLMs get words. Unknown tokens are kept, not dropped.
+    const doc = 'PEOPLE PRESENT: 2 - $yenka, $rosario\n- $yenka\n  WEARING: $yenka.outfit, unbuttoned\n  POSE: back to viewer showing $yenka.back\n- $rosario\n  WEARING: $rosario.armor, dented';
+    const ex = expandSceneDoc({ doc, characters: [rosario], personas: [yenka] });
+    assert.ok(ex.text.includes('PEOPLE PRESENT: 2 - Yenka, Rosario'));
+    assert.ok(ex.text.includes('WEARING: white button-up shirt, unbuttoned') && ex.text.includes('showing a big tattoo on left shoulder back'));
+    assert.ok(ex.text.includes('WEARING: $rosario.armor, dented'), 'unknown detail token stays in place');
+    assert.deepEqual(ex.unknown, ['$rosario.armor']);
+    assert.ok(ex.text.split('\n').length === doc.split('\n').length, 'line structure untouched');
+    assert.equal(expandScene({ scene: 'x $ghost y', characters: [], personas: [] }).text, 'x y', 'prompt drafts still drop unknown tokens');
     assert.ok(st.user.indexOf('DOC A') < st.user.indexOf('DOC B') && st.user.includes('document 2 of 2 (most recent)'), 'previous documents oldest first, latest marked');
     assert.ok(st.user.indexOf('PREVIOUS SCENE DOCUMENTS') < st.user.indexOf('LATEST REPLY'));
     assert.ok(buildScenePrompt({ paragraphs: [], characters: [], personas: [] }).user.includes('(none - this is the first illustrated reply)'));

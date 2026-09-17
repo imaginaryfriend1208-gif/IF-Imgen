@@ -8,7 +8,7 @@ import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stri
 import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
 import { resolveEntities, rosterText } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
-import { expandScene, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
+import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
 import { clamp } from './util.js';
 
 /** @typedef {{ url:string, p:number, scene:string, expanded:string, setting:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord  (setting = the scene document the image was written from) */
@@ -123,8 +123,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     /**
      * Step 1: ONE LLM call writes the SCENE DOCUMENT of a reply (scene, location, layout, who is present, what each
-     * wears / feels / does, poses, continuity with the previous documents). Stored on the message; every image prompt
-     * of the reply is translated from it and the next reply's planner reads it again.
+     * wears / feels / does, poses, continuity with the previous documents). People and their stored details are
+     * written as $keyword / $keyword.detail tokens (expanded by docWords() for steps 2 / 3). Stored on the message;
+     * every image prompt of the reply is translated from it and the next reply's planner reads it again.
      */
     async function writeSceneDoc(ctx, messageId, { paragraphs, context }, signal) {
         const g = settings.generate;
@@ -158,6 +159,19 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
+     * Scene document as the downstream LLMs read it: $keyword -> name, $keyword.detail -> stored text (current
+     * entity data, so edited details reach old documents). The document on the message keeps its tokens.
+     */
+    function docWords(ctx, doc) {
+        const text = String(doc ?? '');
+        if (!text.includes('$')) return text;
+        const ents = resolveEntities(settings, { text, ...chatIdentity(ctx) });
+        const ex = expandSceneDoc({ doc: text, characters: ents.characters, personas: ents.personas });
+        if (ex.unknown.length) log('scene document: unresolved tokens kept as written:', ex.unknown);
+        return ex.text;
+    }
+
+    /**
      * Step 2: translate the scene document (+ the numbered paragraphs) into image prompts with $tokens.
      * `fixed` = write one prompt for every listed paragraph (regenerate keeps every image slot).
      * @returns {Promise<{p:number, prompt:string}[]>}
@@ -166,7 +180,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const g = settings.generate;
         const preset = findPreset(settings, presetId ?? g.presetId);
         const { system, user } = renderPlannerPrompt(preset, {
-            paragraphs, count, dialect: g.dialect, sceneDoc, fixed, context,
+            paragraphs, count, dialect: g.dialect, sceneDoc: docWords(ctx, sceneDoc), fixed, context,
             roster: rosterText(settings, chatIdentity(ctx)),
         });
         const reply = await llm.chat({ system, user, signal });
@@ -191,7 +205,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         for (const ex of shots) if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
         let refined = scenes.map(() => '');
         if (g.mode === 'refine') {
-            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, setting, shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
+            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, setting: docWords(ctx, setting), shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
             refined = parseRefined(await llm.chat({ ...msgs, signal }), scenes.length);
             if (refined.every(r => !r)) throw new Error('Refine LLM returned no usable prompts.');
             refined.forEach((r, i) => { if (!r) log(`refine: shot ${i + 1} missing in reply, falling back to the expanded draft`); });

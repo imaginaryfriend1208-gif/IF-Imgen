@@ -57,14 +57,15 @@ function splitCamelRelative(key) {
 }
 
 /**
- * Expand tokens in a planner scene.
- * @param {{ scene:string, characters:object[], personas:object[] }} a
+ * Expand tokens in a planner scene (or in a scene document).
+ * @param {{ scene:string, characters:object[], personas:object[], keepUnknown?:boolean }} a
+ *   keepUnknown - leave unresolved tokens in the text instead of dropping them (scene documents: never lose a line)
  * @returns {{ text:string, used: Map<string, Set<string>>, unknown:string[] }}
  *   text    - scene with tokens replaced (entity -> name, facet -> facet text)
  *   used    - entityId -> facet keys referenced (empty set = only the base look)
- *   unknown - tokens that could not be resolved (dropped from text)
+ *   unknown - tokens that could not be resolved (dropped from text unless keepUnknown)
  */
-export function expandScene({ scene, characters = [], personas = [] }) {
+export function expandScene({ scene, characters = [], personas = [], keepUnknown = false }) {
     const used = new Map();
     const unknown = [];
     const last = { characters: characters[0] ?? null, personas: personas[0] ?? null };
@@ -80,14 +81,23 @@ export function expandScene({ scene, characters = [], personas = [] }) {
             e = entityByKey(characters, key) ?? entityByKey(personas, key);
             if (e) last[characters.includes(e) ? 'characters' : 'personas'] = e;
         }
-        if (!e) { unknown.push(m); return ''; }
+        if (!e) { unknown.push(m); return keepUnknown ? m : ''; }
         if (!f) { mark(e); return e.name || ''; }
         const fx = facetOf(e, f);
-        if (!fx) { unknown.push(m); mark(e); return e.name || ''; }
+        if (!fx) { unknown.push(m); mark(e); return keepUnknown ? m : (e.name || ''); }
         mark(e, f);
         return fx.text;
     });
-    return { text: tidy(text), used, unknown };
+    return { text: keepUnknown ? text.trim() : tidy(text), used, unknown };
+}
+
+/**
+ * Scene document -> plain words for the translator / refine LLM: every $keyword becomes the name, every
+ * $keyword.detail its stored text; tokens that do not resolve stay as written (nothing is lost). The document
+ * itself is stored WITH tokens so later edits of an entity's details reach every future regenerate.
+ */
+export function expandSceneDoc({ doc, characters = [], personas = [] }) {
+    return expandScene({ scene: doc, characters, personas, keepUnknown: true });
 }
 
 function tidy(s) {
@@ -104,6 +114,7 @@ export function rosterLine(e, label) {
 // ---------------------------------------------------------------- scene document (step 1)
 
 export const DEFAULT_SCENE_SYSTEM = `You are the scene planner and continuity keeper of an illustrated roleplay. You read the latest reply (numbered paragraphs), the earlier chat context, the CAST (known people with their stored details) and the PREVIOUS SCENE DOCUMENTS written for earlier replies, and you write ONE SCENE DOCUMENT for this reply. Every image prompt of this reply is written from this document only, and the document is read again when the next reply is planned, so it must be precise, complete and consistent with the previous documents unless the text clearly changes something.
+TOKENS: the CAST lists each known person as $keyword and each stored detail as $keyword.detail followed by its text (e.g. $yenka.outfit: white button-up shirt). Refer to a known person by $keyword or by name. When a stored detail IS what is on show or worn, write the TOKEN instead of copying its text, then add only what differs right now (e.g. WEARING: $yenka.outfit, unbuttoned, sleeves rolled up, barefoot). When the current clothing is NOT the stored outfit, describe it in words instead. Tokens are replaced by their stored text automatically later. Never write a token that is not listed and never guess what a detail contains.
 Write plain text in these sections, short factual lines, in this order:
 SCENE: what happens in this reply in 2-3 sentences; the mood; the visual style or genre feel (quiet domestic drama, tense noir, warm slice of life...).
 LOCATION: indoors or outdoors; the type of place (bedroom, kitchen, alley, forest road...); time of day; weather; the light sources and the quality of the light (colour, direction, intensity).
@@ -111,7 +122,7 @@ LAYOUT: the room or area in detail - size, walls / floor / ceiling or ground and
 PEOPLE PRESENT: how many people are physically in the scene, then their names. People only mentioned, remembered or on the phone are NOT present.
 For EACH person present, one block:
 - <name>
-  WEARING: every garment right now with its colour, material or pattern when known, and its state (buttoned, unbuttoned, soaked, torn, pushed off one shoulder, removed and lying where...). Include footwear and accessories. If the CAST lists an outfit detail for that person, use it unless the text clearly says otherwise. If undressed, say exactly what is on and what is off.
+  WEARING: every garment right now with its colour, material or pattern when known, and its state (buttoned, unbuttoned, soaked, torn, pushed off one shoulder, removed and lying where...). Include footwear and accessories. If the CAST lists an outfit detail for that person, write its token ($keyword.outfit) plus the current state unless the text clearly says they wear something else. If undressed, say exactly what is on and what is off.
   EXPRESSION: the face and the gaze (what or whom they look at), the emotion as it shows on the face.
   DOING: what they do over the course of this reply, in order, with the paragraph number of each action ([3] sits on the edge of the bed...).
   POSE / POSITION: body position and where they are relative to the others and to the layout (standing by the window, kneeling at the foot of the bed, facing away...).
@@ -127,19 +138,20 @@ Rules: state only what the text, the cast and the previous documents say or clea
 export function buildScenePrompt(a) {
     const system = String(a.system || DEFAULT_SCENE_SYSTEM);
     const cast = [...(a.characters ?? []).map(e => [e, 'character']), ...(a.personas ?? []).map(e => [e, 'user persona'])];
+    // Each detail is shown as its token + text, so the planner can write the token and still knows what it means.
     const castBlock = cast.map(([e, label]) => {
-        const facets = (e.facets ?? []).map(f => `  ${f.key}: ${f.text}`);
-        return `- ${e.name} (${label})${facets.length ? `\n${facets.join('\n')}` : ''}`;
+        const facets = (e.facets ?? []).map(f => `  $${e.keyword}.${f.key}: ${f.text}`);
+        return `- ${e.name} (${label}) — token $${e.keyword}${facets.length ? `\n${facets.join('\n')}` : ''}`;
     });
     const prev = (a.previous ?? []).filter(x => x && String(x.text ?? '').trim());
     const prevBlock = prev.map((x, i) => `--- document ${i + 1} of ${prev.length}${i === prev.length - 1 ? ' (most recent)' : ''} ---\n${String(x.text).trim()}`).join('\n\n');
     const paraBlock = (a.paragraphs ?? []).map(p => `[${p.index}] ${p.text}`).join('\n\n');
     const user = [
-        castBlock.length ? `CAST (known people and their stored details):\n${castBlock.join('\n')}` : 'CAST: (nobody from the roster)',
+        castBlock.length ? `CAST (known people and their stored details; write the tokens, they are expanded later):\n${castBlock.join('\n')}` : 'CAST: (nobody from the roster)',
         prev.length ? `PREVIOUS SCENE DOCUMENTS (continuity - keep what did not change):\n${prevBlock}` : 'PREVIOUS SCENE DOCUMENTS: (none - this is the first illustrated reply)',
         a.context ? `EARLIER CONTEXT:\n${a.context}` : '',
         `LATEST REPLY, NUMBERED PARAGRAPHS:\n${paraBlock}`,
-        'Write the scene document for the latest reply now.',
+        'Write the scene document for the latest reply now (use the listed tokens for people and their stored details).',
     ].filter(Boolean).join('\n\n');
     return { system, user };
 }
