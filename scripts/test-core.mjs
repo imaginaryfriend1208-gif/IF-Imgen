@@ -688,6 +688,28 @@ test('ui: every .ent-profile-* selector the entity editor queries exists in the 
     for (const id of ['ifimgen_profile_system', 'ifimgen_profile_reset']) assert.ok(src.includes(`'${id}'`) && (src.includes(`id="${id}"`) || src.includes(`id: '${id}'`)), `${id} must be both in markup and bound`);
 });
 
+test('ui: profile box - onJobs hook is declared AFTER savedEntity (const TDZ would break the whole drawer), no versions strip, Use LLM off by default', () => {
+    const src = readFileSync(new URL('../src/ui.js', import.meta.url), 'utf8');
+    const decl = src.indexOf('const savedEntity = ');
+    const hook = src.indexOf('pipeline.onJobs(() => { const e = savedEntity()');
+    assert.ok(decl > 0 && hook > decl, 'onJobs hook must come after the savedEntity declaration');
+    assert.ok(!src.includes('ent-profile-versions'), 'versions strip removed from the profile box');
+    assert.ok(/class="ent-profile-llm">/.test(src), 'Use LLM checkbox must not be checked by default');
+    assert.ok(/class="ent-profile-sfw" checked>/.test(src), 'SFW must be checked by default');
+    assert.ok(src.includes('ifimgen-profile-actions'), 'action buttons row class present');
+});
+
+test('profile image: framing words differ per shot and spell out bust / full (waist, feet, distance)', () => {
+    const e = createEntity('characters', { name: 'Ly', keyword: 'ly', tags: '1girl, black hair' });
+    const t = s => profileDraft({ entity: e, dialect: 'tags', shot: s, sfw: true });
+    const n = s => profileDraft({ entity: e, dialect: 'natural', shot: s, sfw: true });
+    assert.ok(t('portrait').includes('face focus') && !t('portrait').includes('full body'));
+    assert.ok(t('bust').includes('from the waist up') && !t('bust').includes('face focus'));
+    assert.ok(t('full').includes('full body') && t('full').includes('feet visible'));
+    assert.ok(n('bust').includes('waist up') && n('full').includes('feet inside the frame') && n('portrait').includes('nothing below the chest'));
+    assert.equal(new Set([t('portrait'), t('bust'), t('full')]).size, 3);
+});
+
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }
 console.log(`PASS (${passed} cases)`);
 

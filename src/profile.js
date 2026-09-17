@@ -83,9 +83,20 @@ export function parseProfilePrompt(text) {
     return parseRefined(text, 1)[0] ?? '';
 }
 
+// Image models default to a head shot: bust / full must say what is IN the frame (waist, feet) and the distance,
+// otherwise all three framings come out as a portrait.
 const SHOT_WORDS = {
-    tags: { portrait: 'portrait, close-up, face focus', bust: 'upper body', full: 'full body, standing' },
-    natural: { portrait: 'head-and-shoulders portrait', bust: 'upper-body portrait', full: 'full-body portrait' },
+    tags: {
+        portrait: 'portrait, close-up, face focus',
+        bust: 'upper body, cowboy shot, from the waist up, hands visible',
+        full: 'full body, wide shot, standing, from head to toe, feet visible, from a distance',
+    },
+    natural: { portrait: 'close-up head-and-shoulders portrait', bust: 'upper-body portrait', full: 'full-body portrait' },
+};
+const FRAME_NOTE = {
+    portrait: 'The face fills the frame, nothing below the chest.',
+    bust: 'Framed from the waist up, hands visible.',
+    full: 'Standing, seen from a distance from head to toe, the feet inside the frame.',
 };
 
 /**
@@ -99,7 +110,7 @@ export function profileDraft(a) {
     const facets = profileFacets(e, { shot, sfw: a.sfw !== false }).map(f => f.text);
     if (natural) {
         const base = e.natural || e.tags || e.name || 'a person';
-        const parts = [`A ${SHOT_WORDS.natural[shot]} of ${e.name || 'the character'}: ${base}.`];
+        const parts = [`A ${SHOT_WORDS.natural[shot]} of ${e.name || 'the character'}: ${base}.`, FRAME_NOTE[shot]];
         if (facets.length) parts.push(`${facets.join('. ')}.`);
         parts.push('Alone, looking at the viewer with a calm expression, simple soft background, flattering portrait lighting, sharp focus on the face.');
         return parts.join(' ').replace(/\.\./g, '.').replace(/\s{2,}/g, ' ').trim();

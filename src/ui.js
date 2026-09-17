@@ -521,8 +521,15 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             if (isStyle || !q('.ent-profile-pic')) return;
             const saved = e?.id ? list().find(x => x.id === e.id) : null;
             const prof = saved?.profile ?? e?.profile ?? { shot: 'portrait', sfw: true, current: null, history: [] };
-            q('.ent-profile-shot').value = prof.shot ?? 'portrait';
-            q('.ent-profile-sfw').checked = prof.sfw !== false;
+            // Framing / SFW follow the stored choice only when another entry is loaded. Re-renders during a job
+            // (status ticks) must keep what the user just picked - resetting them here was why bust / full
+            // silently rendered as portrait: the select was reset before the pipeline read it.
+            const id = saved?.id ?? null;
+            if (renderProfile.lastId !== id) {
+                q('.ent-profile-shot').value = prof.shot ?? 'portrait';
+                q('.ent-profile-sfw').checked = prof.sfw !== false;
+                renderProfile.lastId = id;
+            }
             const pic = q('.ent-profile-pic');
             const cur = prof.current ?? null;
             pic.classList.toggle('has', Boolean(cur));
@@ -535,17 +542,16 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             for (const c of ['.ent-profile-edit', '.ent-profile-preview']) q(c).disabled = running || !saved;
             q('.ent-profile-open').disabled = !cur;
             q('.ent-profile-delete').disabled = running || !cur;
-            const ver = q('.ent-profile-versions');
-            const hist = prof.history ?? [];
-            ver.style.display = cur && hist.length ? '' : 'none';
-            ver.innerHTML = cur && hist.length ? `<span class="ifimgen-cap-k">${t('vw_versions')} (${hist.length + 1})</span><img class="cur" src="${escapeHtml(cur.url)}" title="${t('vw_ver_current')}">`
-                + hist.map(h => `<img data-url="${escapeHtml(h.url)}" src="${escapeHtml(h.url)}" title="${t('vw_ver_older')}">`).join('') : '';
             const det = q('.ent-profile-prompt');
             det.style.display = cur?.prompt ? '' : 'none';
             if (cur?.prompt) { det.querySelector('summary').textContent = `${t('pv_profile_final')} · ${cur.shot ?? ''}${cur.sfw === false ? ' · nsfw' : ''}`; q('.ent-profile-prompt-text').textContent = cur.prompt; }
         }
         const profStatus = (text, cls = '') => { const n = q('.ent-profile-status'); n.textContent = text; n.className = `ifimgen-status ${cls}`; };
         const savedEntity = () => (currentId ? list().find(x => x.id === currentId) : null) ?? null;
+        // Generate <-> Cancel follows the pipeline's job events, not the promise chain of runProfile(): whenever a job
+        // starts or ends (this entry's render included) the box is re-rendered, so the button can never stay stuck on
+        // "generating" when the chain is not resumed. NOTE: must stay below `savedEntity` (const, TDZ).
+        if (!isStyle && pipeline.onJobs) pipeline.onJobs(() => { const e = savedEntity(); if (e && q('.ent-profile-pic')) renderProfile(e); });
         async function runProfile(draft) {
             const saved = savedEntity();
             if (!saved) return profStatus(t('st_profile_unsaved'), 'error');
@@ -598,11 +604,6 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
                 if (ok !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
                 pipeline.profileRemove(kind, saved.id);
                 renderProfile(saved); profStatus(t('st_profile_deleted'), 'ok');
-            });
-            q('.ent-profile-versions').addEventListener('click', e => {
-                const im = e.target.closest('img[data-url]'); const saved = savedEntity();
-                if (!im || !saved) return;
-                if (pipeline.profileSwitch(kind, saved.id, im.dataset.url)) { renderProfile(saved); profStatus(t('st_profile_switched'), 'ok'); }
             });
         }
         // Working copy of the binding lists while editing (committed on Save).
@@ -765,15 +766,14 @@ function entityPanel({ kind, tab, label, icon, hint }) {
                 <div class="ifimgen-profile-side">
                     <div class="ifimgen-row"><label>${t('lbl_framing')}</label><select class="text_pole ent-profile-shot">${PROFILE_SHOTS.map(s => `<option value="${s}">${t(`opt_shot_${s}`)}</option>`).join('')}</select></div>
                     <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-profile-sfw" checked> ${t('lbl_profile_sfw')}</label></div>
-                    <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-profile-llm" checked> ${t('btn_profile_llm')}</label></div>
-                    <div class="ifimgen-row">
+                    <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-profile-llm"> ${t('btn_profile_llm')}</label></div>
+                    <div class="ifimgen-row ifimgen-profile-actions">
                         ${btn({ cls: 'ent-profile-gen primary', icon: 'image', label: t('btn_profile_gen') })}
                         ${btn({ cls: 'ent-profile-edit', icon: 'clipboard', title: t('btn_profile_edit') })}
                         ${btn({ cls: 'ent-profile-preview', icon: 'locate', title: t('btn_profile_preview') })}
                         ${btn({ cls: 'ent-profile-open', icon: 'download', title: t('btn_profile_view') })}
                         ${btn({ cls: 'ent-profile-delete danger', icon: 'trash', title: t('btn_profile_delete') })}
                     </div>
-                    <div class="ifimgen-lightbox-versions ent-profile-versions" style="display:none"></div>
                     <details class="ent-profile-prompt" style="display:none"><summary></summary><pre class="ifimgen-pre ent-profile-prompt-text"></pre></details>
                     <div class="ifimgen-status ent-profile-status"></div>
                 </div>
