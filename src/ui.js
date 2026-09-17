@@ -528,7 +528,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             const cur = prof.current ?? null;
             pic.classList.toggle('has', Boolean(cur));
             pic.innerHTML = cur ? `<img src="${escapeHtml(cur.url)}" alt="" title="${escapeHtml(cur.prompt ?? '')}">` : `<span class="ifimgen-note">${t('ph_profile_empty')}</span>`;
-            const running = Boolean(saved && pipeline.profileRunning?.(saved.id));
+            const running = Boolean(saved && pipeline.profileRunning(saved.id));
             const gen = q('.ent-profile-gen');
             gen.querySelector('span').textContent = t(running ? 'btn_profile_cancel' : cur ? 'btn_profile_regen' : 'btn_profile_gen');
             gen.classList.toggle('danger', running); gen.classList.toggle('primary', !running);
