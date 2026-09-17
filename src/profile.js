@@ -83,9 +83,10 @@ export function parseProfilePrompt(text) {
     return parseRefined(text, 1)[0] ?? '';
 }
 
+// Image models default to a head shot: bust / full must say what is IN frame (waist, feet) and the distance.
 const SHOT_WORDS = {
-    tags: { portrait: 'portrait, close-up, face focus', bust: 'upper body', full: 'full body, standing' },
-    natural: { portrait: 'head-and-shoulders portrait', bust: 'upper-body portrait', full: 'full-body portrait' },
+    tags: { portrait: 'portrait, close-up, face focus', bust: 'upper body, cowboy shot, from the waist up, hands visible', full: 'full body, wide shot, standing, from head to toe, feet visible, from a distance' },
+    natural: { portrait: 'close-up head-and-shoulders portrait', bust: 'medium shot from the waist up with the hands visible', full: 'full-body shot taken from a distance, standing from head to toe with the feet inside the frame' },
 };
 
 /**

@@ -247,6 +247,10 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-profile-side .ifimgen-row > label { min-width: 90px; }
 .ifimgen-profile-side .ifimgen-pre { max-height: 160px; }
 .ifimgen-profile-side details > summary { cursor: pointer; }
+.ifimgen-profile-actions { flex-wrap: nowrap; }
+.ifimgen-profile-actions .ifimgen-btn { flex: 0 0 auto; }
+.ifimgen-profile-actions .ent-profile-gen { flex: 1 1 auto; min-width: 0; }
+.ifimgen-profile-actions .ent-profile-gen span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 768px) {
     .ifimgen-profile { flex-direction: column; }
     .ifimgen-profile-pic { width: 100%; max-width: 220px; flex-basis: auto; }
