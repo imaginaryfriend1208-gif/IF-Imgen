@@ -21,9 +21,12 @@ OUTPUT FORMAT (strict): reply with ONLY a JSON array, no prose, no markdown fenc
 [{"p": <paragraph number>, "prompt": "<image prompt>"}]
 - "p" must be one of the paragraph numbers listed, each used at most once. Pick the most visual moments.
 - Produce exactly {{count}} objects unless fewer paragraphs are usable.
-- {{dialect_rule}}
+{{aspect_rule}}- {{dialect_rule}}
 
 {{example}}`;
+
+const ASPECT_RULE = `- Add "ar" to every object: "portrait" (tall) for one person full body / cowboy shot, an outfit showcase or a vertical action (standing, jumping, hanging); "landscape" (wide) for two people side by side, big environments where people are small, lying poses, wide establishing shots; "square" for face close-ups, bust shots, hand / object close-ups.
+`;
 
 /** Prompt length: without / with a scene document (the document spells out place, clothing, expression and pose of everyone). */
 const TAG_RANGE = { plain: '25-45', doc: '40-65' };
@@ -153,7 +156,13 @@ export function presetDialect(preset, fallback) {
  */
 export function effectiveDialect(settings, presetId) {
     const g = settings?.generate ?? {};
-    return presetDialect(findPreset(settings, presetId ?? g.presetId), g.dialect);
+    const preset = findPreset(settings, presetId ?? g.presetId);
+    if (DIALECT_RULES[preset?.dialect]) return preset.dialect;
+    // Model profile of the active backend (set in Connection) beats the global switch.
+    const be = settings?.connection?.backend;
+    const prof = settings?.connection?.profiles?.[be]?.[settings?.connection?.[be]?.model];
+    if (DIALECT_RULES[prof?.dialect]) return prof.dialect;
+    return presetDialect(preset, g.dialect);
 }
 
 export function createPreset(partial = {}) {
@@ -199,7 +208,7 @@ export function findPreset(settings, id) {
 /**
  * Step 2 messages: scene document (+ paragraphs) -> N image prompts.
  * @param {object} preset
- * @param {{ paragraphs: {index:number,text:string}[], count:number, roster:string, context?:string, dialect:string, sceneDoc?:string, fixed?:boolean }} a
+ * @param {{ paragraphs: {index:number,text:string}[], count:number, roster:string, context?:string, dialect:string, sceneDoc?:string, fixed?:boolean, autoAspect?:boolean }} a
  *   sceneDoc - the scene document written in step 1 (authoritative). Earlier context is omitted when it is given.
  *   fixed    - the listed paragraphs are exactly the ones to illustrate (regenerate: keep every image slot)
  */
@@ -210,6 +219,7 @@ export function renderPlannerPrompt(preset, a) {
     // The document contract is appended to the preset text so overridden / user presets get it too.
     const system = (preset.system + (doc ? SCENE_DOC_RULES : ''))
         .replaceAll('{{count}}', String(a.count))
+        .replaceAll('{{aspect_rule}}', a.autoAspect ? ASPECT_RULE : '')
         .replaceAll('{{dialect_rule}}', DIALECT_RULES[dialect])
         .replaceAll('{{tag_range}}', TAG_RANGE[len])
         .replaceAll('{{word_range}}', WORD_RANGE[len])
@@ -301,7 +311,8 @@ export function parsePlan(text, validIndexes) {
         const prompt = String(item?.prompt ?? '').trim();
         if (!valid.has(p) || !prompt || seen.has(p)) continue;
         seen.add(p);
-        out.push({ p, prompt });
+        const ar = String(item?.ar ?? '').toLowerCase();
+        out.push(['portrait', 'landscape', 'square'].includes(ar) ? { p, prompt, ar } : { p, prompt });
     }
     return out.sort((x, y) => x.p - y.p);
 }

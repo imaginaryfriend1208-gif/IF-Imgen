@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
 import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset, extractJsonArray, presetDialect, effectiveDialect } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
-import { compilePrompt, effectiveParams, modelParams, hasProfile, softenTags } from '../src/prompt.js';
+import { compilePrompt, effectiveParams, modelParams, hasProfile, softenTags, modelPromptPrefs } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages, collectProfileImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
@@ -345,6 +345,36 @@ test('compilePrompt natural (Krea): softened cast, sentences not comma lists, no
     st.generate.presetId = BUILTIN_PRESETS[0].id; assert.equal(effectiveDialect(st), 'natural');
     const tagsOnly = compilePrompt({ scene: 'x', ...ents, settings: s, backend: 'sd' });
     assert.ok(tagsOnly.prompt.includes('1girl, silver hair'), 'default path unchanged (global tags)');
+});
+
+test('model profile prompt prefs: dialect / negative per model beat the global switch, preset-forced dialect beats both; auto aspect swaps the size', () => {
+    const st = defaultSettings();
+    st.connection.backend = 'sd'; st.connection.sd.model = 'krea.safetensors';
+    st.connection.profiles.sd['krea.safetensors'] = { ...PARAM_DEFAULTS.sd, dialect: 'natural', useNegative: false };
+    st.generate.dialect = 'tags'; st.generate.useNegative = true; st.generate.negative = 'lowres';
+    assert.deepEqual(modelPromptPrefs(st, 'sd'), { dialect: 'natural', useNegative: false });
+    assert.equal(effectiveDialect(st), 'natural', 'model profile dialect wins over generate.dialect');
+    const ents = { characters: [], personas: [], style: null };
+    const out = compilePrompt({ scene: 'A woman by a window', ...ents, settings: st, backend: 'sd' });
+    assert.equal(out.negative, '', 'model profile turns the negative off');
+    assert.ok(!out.prompt.includes('masterpiece'), 'prose path: no quality prefix');
+    st.generate.presetId = 'nai_tags';
+    assert.equal(effectiveDialect(st), 'tags', 'preset-forced dialect beats the model profile');
+    st.connection.sd.model = 'other.safetensors';
+    assert.deepEqual(modelPromptPrefs(st, 'sd'), { dialect: '', useNegative: '' }, 'model without prefs follows the global settings');
+    // auto aspect: portrait profile 832x1216 -> landscape swaps, square uses the same pixel budget, off = untouched
+    st.generate.autoAspect = true;
+    assert.deepEqual([effectiveParams(st, 'sd', { ar: 'landscape' }).width, effectiveParams(st, 'sd', { ar: 'landscape' }).height], [1216, 832]);
+    assert.deepEqual([effectiveParams(st, 'sd', { ar: 'portrait' }).width, effectiveParams(st, 'sd', { ar: 'portrait' }).height], [832, 1216]);
+    const sq = effectiveParams(st, 'sd', { ar: 'square' }); assert.equal(sq.width, sq.height); assert.equal(sq.width % 64, 0); assert.ok(Math.abs(sq.width * sq.height - 832 * 1216) < 832 * 1216 * 0.1);
+    st.generate.autoAspect = false;
+    assert.deepEqual([effectiveParams(st, 'sd', { ar: 'landscape' }).width, effectiveParams(st, 'sd', { ar: 'landscape' }).height], [832, 1216], 'disabled -> profile size kept');
+    // parsePlan keeps a valid "ar", drops garbage; the aspect rule is only rendered when enabled
+    assert.deepEqual(parsePlan('[{"p":1,"prompt":"a","ar":"Landscape"},{"p":2,"prompt":"b","ar":"huge"}]', [1, 2]), [{ p: 1, prompt: 'a', ar: 'landscape' }, { p: 2, prompt: 'b' }]);
+    const base = { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' };
+    assert.ok(renderPlannerPrompt(BUILTIN_PRESETS[0], { ...base, autoAspect: true }).system.includes('Add "ar" to every object'));
+    const off = renderPlannerPrompt(BUILTIN_PRESETS[0], base).system;
+    assert.ok(!off.includes('"ar"') && !off.includes('{{'));
 });
 
 test('planner rules mention detail tokens', () => {

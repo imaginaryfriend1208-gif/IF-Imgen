@@ -94,6 +94,7 @@
 .ifimgen-status { font-size: .9em; min-height: 1.2em; }
 .ifimgen-status.error { color: var(--warning, #f7768e); }
 .ifimgen-status.ok { color: var(--okGreen, #9ece6a); }
+.ifimgen-status.warn { color: var(--golden, #e0af68); }
 .ifimgen-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .ifimgen-chip { border: 1px solid var(--ifg-border); border-radius: 12px; padding: 1px 8px; font-size: .78em; font-weight: 500; }
 .ifimgen-chip.active { background: var(--ifg-accent); color: #fff; border-color: var(--ifg-accent); }

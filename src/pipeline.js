@@ -5,7 +5,7 @@
 //   render each prompt -> insert in place. Each image is recorded in message.extra.ifimgen so it can be regenerated later.
 // Regenerate (one image / all images) re-runs step 2 (+3) from the STORED document; "regen scene" / Generate re-run step 1.
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
-import { renderPlannerPrompt, parsePlan, findPreset, presetDialect, effectiveDialect } from './presets.js';
+import { renderPlannerPrompt, parsePlan, findPreset, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
@@ -197,7 +197,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const g = settings.generate;
         const preset = findPreset(settings, presetId ?? g.presetId);
         const { system, user } = renderPlannerPrompt(preset, {
-            paragraphs, count, dialect: presetDialect(preset, g.dialect), sceneDoc: docWords(ctx, sceneDoc), fixed, context,
+            paragraphs, count, dialect: effectiveDialect(settings, preset.id), sceneDoc: docWords(ctx, sceneDoc), fixed, context, autoAspect: g.autoAspect === true,
             roster: rosterText(settings, chatIdentity(ctx)),
         });
         const reply = await llm.chat({ system, user, signal });
@@ -266,9 +266,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /** Send a final prompt to the active backend and save the PNG. No compile step. `folder` = image folder name (default: the open character). */
-    async function renderRaw(ctx, { prompt, negative }, signal, status, folder = '') {
+    async function renderRaw(ctx, { prompt, negative, ar = '' }, signal, status, folder = '') {
         const backend = backends.active();
-        const params = effectiveParams(settings, backend.id);
+        const params = effectiveParams(settings, backend.id, { ar });
         status('rendering…');
         const t0 = Date.now();
         // Watchdog: a response that never arrives (proxy queue stall, dropped connection, backend finished but the
@@ -297,11 +297,11 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /** Render one already-compiled shot and build its record. */
-    async function renderCompiled(ctx, { scene, p, setting = '' }, c, signal, status) {
+    async function renderCompiled(ctx, { scene, p, setting = '', ar = '' }, c, signal, status) {
         const backend = backends.active();
-        const { url, model } = await renderRaw(ctx, { prompt: c.prompt, negative: c.negative }, signal, status);
+        const { url, model } = await renderRaw(ctx, { prompt: c.prompt, negative: c.negative, ar }, signal, status);
         /** @type {ImageRecord} */
-        return { url, p, scene, expanded: c.expanded, setting, refined: c.refined, prompt: c.prompt, negative: c.negative, mode: settings.generate.mode, backend: backend.id, model, at: Date.now() };
+        return { url, p, scene, ar, expanded: c.expanded, setting, refined: c.refined, prompt: c.prompt, negative: c.negative, mode: settings.generate.mode, backend: backend.id, model, at: Date.now() };
     }
 
     const logCompiled = (c, label = '') => log(`compiled${label} [chars: ${c.ents.characters.map(e => e.name).join(',') || '-'} | personas: ${c.ents.personas.map(e => e.name).join(',') || '-'} | style: ${c.ents.style?.name ?? '-'}]`, c.prompt);
@@ -378,7 +378,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const made = [];
             for (let i = 0; i < plan.length; i++) {
                 status(`image ${i + 1}/${plan.length} (paragraph ${plan[i].p})…`);
-                made.push(await renderCompiled(ctx, { scene: plan[i].prompt, p: plan[i].p, setting }, compiled[i], controller.signal, status));
+                made.push(await renderCompiled(ctx, { scene: plan[i].prompt, p: plan[i].p, setting, ar: plan[i].ar ?? '' }, compiled[i], controller.signal, status));
                 tm.lap(`image ${i + 1}`);
             }
 
@@ -497,7 +497,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             for (let i = 0; i < todo.length; i++) {
                 const rec = { ...todo[i], scene: prompts[i] };
                 status(`image ${i + 1}/${todo.length}…`);
-                const fresh = await renderCompiled(ctx, { scene: rec.scene, p: rec.p ?? 0, setting }, compiled[i], controller.signal, status);
+                const fresh = await renderCompiled(ctx, { scene: rec.scene, p: rec.p ?? 0, setting, ar: rec.ar ?? '' }, compiled[i], controller.signal, status);
                 fresh.history = [stripHistory(todo[i]), ...(todo[i].history ?? [])].slice(0, MAX_VERSIONS);
                 const all = records(msg);
                 const j = all.findIndex(r => r.url === rec.url);

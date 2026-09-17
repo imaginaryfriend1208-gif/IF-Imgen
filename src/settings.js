@@ -49,6 +49,7 @@ export function defaultSettings() {
             contextMessages: 4,         // K previous messages given to the scene planner
             sceneHistory: 3,            // scene documents of earlier replies handed to the scene planner (continuity)
             presetId: BUILTIN_PRESETS[0].id,
+            autoAspect: false,
             dialect: 'tags',            // 'tags' | 'natural'
             // Calls per reply: 'plan' = 2 (scene document + translate to prompts) | 'refine' = 3 (+ ONE batch refine for all images)
             mode: 'plan',

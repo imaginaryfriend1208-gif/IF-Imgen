@@ -1,7 +1,7 @@
 // IF Imgen - drawer UI: Settings / Characters / Personas / Styles / Gallery / How to use / Generate.
 import { escapeHtml, downloadJson, downloadUrl, readFileAsText } from './util.js';
 import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS } from './entities.js';
-import { allPresets, createPreset, overwritePreset, resetPreset, BUILTIN_PRESETS } from './presets.js';
+import { allPresets, createPreset, overwritePreset, resetPreset, BUILTIN_PRESETS, effectiveDialect } from './presets.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
 import { workflowInfo, autoMapWorkflow } from './comfy.js';
 import { modelParams, hasProfile } from './prompt.js';
@@ -199,6 +199,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             syncCombo('ifimgen_p_scheduler_sel', 'ifimgen_p_scheduler_sd', c.sd.schedulers, SD_SCHEDULERS);
         }
         for (const k of ['steps', 'cfg', 'width', 'height']) $(`ifimgen_p_${k}`).value = p[k];
+        $('ifimgen_p_dialect').value = p.dialect === 'tags' || p.dialect === 'natural' ? p.dialect : '';
+        $('ifimgen_p_negative').value = typeof p.useNegative === 'boolean' ? (p.useNegative ? 'on' : 'off') : '';
         syncSizePreset();
         const isDefault = editingModel && editingModel === c[viewing].model;
         $('ifimgen_model_badge').style.display = isDefault ? '' : 'none';
@@ -209,12 +211,17 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     }
     function readParams() {
         const naiMode = viewing === 'nai';
-        return {
+        const out = {
             sampler: naiMode ? $('ifimgen_p_sampler_nai').value : $('ifimgen_p_sampler_sd').value.trim(),
             scheduler: naiMode ? $('ifimgen_p_scheduler_nai').value : $('ifimgen_p_scheduler_sd').value.trim(),
             steps: Number($('ifimgen_p_steps').value), cfg: Number($('ifimgen_p_cfg').value),
             width: Number($('ifimgen_p_width').value), height: Number($('ifimgen_p_height').value),
         };
+        // Prompt prefs per model: '' = follow the global Generate settings (key left out of the profile).
+        const d = $('ifimgen_p_dialect').value, neg = $('ifimgen_p_negative').value;
+        if (d) out.dialect = d;
+        if (neg) out.useNegative = neg === 'on';
+        return out;
     }
     modelSel.addEventListener('change', () => { editingModel = modelSel.value; loadParams(); });
     // ---- size presets <-> width/height fields
@@ -293,7 +300,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_count', () => g.imagesPerResponse, v => g.imagesPerResponse = v);
     bind('ifimgen_ctx', () => g.contextMessages, v => g.contextMessages = v);
     bind('ifimgen_scene_hist', () => g.sceneHistory, v => g.sceneHistory = v);
-    bind('ifimgen_dialect', () => g.dialect, v => g.dialect = v);
+    bind('ifimgen_dialect', () => g.dialect, v => { g.dialect = v; naturalWarn(); });
+    bind('ifimgen_auto_aspect', () => g.autoAspect === true, v => g.autoAspect = v);
     const showMode = () => root.querySelectorAll('[data-mode]').forEach(b => b.style.display = b.dataset.mode === g.mode ? '' : 'none');
     bind('ifimgen_mode', () => g.mode, v => { g.mode = v; showMode(); });
     bind('ifimgen_scene_system', () => g.sceneSystem, v => g.sceneSystem = v);
@@ -334,7 +342,16 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         presetText.classList.toggle('ifimgen-dirty', presetDrafts.has(cur.id));
     }
     fillPresets();
-    presetSel.addEventListener('change', () => { g.presetId = presetSel.value; save(); fillPresets(); });
+    /** Prose dialect in effect but some entity only has tags -> the compiler will soften tags; tell the user which ones to fill in. */
+    const naturalWarn = () => {
+        const n = $('ifimgen_natural_warn'); if (!n) return;
+        const d = settings.data;
+        const missing = effectiveDialect(settings) !== 'natural' ? [] : [...d.characters, ...d.personas, ...d.styles].filter(e => !String(e.natural ?? '').trim() && String(e.tags ?? '').trim()).map(e => e.name).filter(Boolean);
+        n.style.display = missing.length ? '' : 'none';
+        n.textContent = missing.length ? t('warn_natural_missing').replace('{list}', missing.slice(0, 8).join(', ') + (missing.length > 8 ? '…' : '')) : '';
+    };
+    presetSel.addEventListener('change', () => { g.presetId = presetSel.value; save(); fillPresets(); naturalWarn(); });
+    naturalWarn();
     presetText.addEventListener('input', () => {
         const cur = curPreset();
         if (presetText.value === cur.system) presetDrafts.delete(cur.id); else presetDrafts.set(cur.id, presetText.value);
@@ -685,7 +702,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     const gallery = mountGallery({ panel: root.querySelector('[data-panel="gallery"]'), getContext, viewer, pipeline });
 
     showTab(openTab);
-    return { refresh() { fillModels(); fillPresets(); gallery.refresh(); }, refreshGallery: () => gallery.refresh(), refreshEntities, showTab };
+    return { refresh() { fillModels(); fillPresets(); naturalWarn(); gallery.refresh(); }, refreshGallery: () => gallery.refresh(), refreshEntities: () => { refreshEntities(); naturalWarn(); }, showTab };
 }
 
 function fillSelect(sel, items, value, emptyLabel = null) {
@@ -819,7 +836,10 @@ function settingsPanel() {
                 ${numRow('ifimgen_p_steps', t('lbl_steps'), 1, 150)}${numRow('ifimgen_p_cfg', t('lbl_cfg'), 0, 30, 0.5)}
                 <div class="ifimgen-row ifimgen-span2"><label for="ifimgen_p_size">${t('lbl_size')}</label><select id="ifimgen_p_size" class="text_pole"></select></div>
                 ${numRow('ifimgen_p_width', t('lbl_width'), 256, 2048, 64)}${numRow('ifimgen_p_height', t('lbl_height'), 256, 2048, 64)}
+                <div class="ifimgen-row"><label for="ifimgen_p_dialect">${t('lbl_p_dialect')}</label><select id="ifimgen_p_dialect" class="text_pole"><option value="">${t('opt_follow_global')}</option><option value="tags">${t('opt_tags')}</option><option value="natural">${t('opt_natural')}</option></select></div>
+                <div class="ifimgen-row"><label for="ifimgen_p_negative">${t('lbl_p_negative')}</label><select id="ifimgen_p_negative" class="text_pole"><option value="">${t('opt_follow_global')}</option><option value="on">${t('opt_on')}</option><option value="off">${t('opt_off')}</option></select></div>
             </div>
+            <div class="ifimgen-note">${t('note_p_dialect')}</div>
             <div class="ifimgen-row">
                 ${btn({ id: 'ifimgen_save_profile', cls: 'primary', icon: 'save', label: t('btn_save_profile') })}
                 ${btn({ id: 'ifimgen_set_default', icon: 'star', label: t('btn_set_default') })}
@@ -860,6 +880,7 @@ function generatePanel() {
                 ${numRow('ifimgen_count', t('lbl_count'), 1, 8)}${numRow('ifimgen_ctx', t('lbl_ctx'), 0, 20)}
                 ${numRow('ifimgen_scene_hist', t('lbl_scene_hist'), 0, 10)}${numRow('ifimgen_minchars', t('lbl_minchars'), 0, 500)}
                 <div class="ifimgen-row"><label for="ifimgen_dialect">${t('lbl_dialect')}</label><select id="ifimgen_dialect" class="text_pole"><option value="tags">${t('opt_tags')}</option><option value="natural">${t('opt_natural')}</option></select></div>
+                <div class="ifimgen-row"><label for="ifimgen_auto_aspect">${t('lbl_auto_aspect')}</label><input type="checkbox" id="ifimgen_auto_aspect"></div>
             </div>
             <div class="ifimgen-note">${t('note_behaviour')}</div>
         </div>
@@ -894,6 +915,7 @@ function generatePanel() {
                 ${fileBtn({ inputId: 'ifimgen_preset_import', title: t('btn_import_presets') })}</div>
             <textarea id="ifimgen_preset_text" class="text_pole" rows="8"></textarea>
             <div class="ifimgen-note">${t('note_preset')}</div>
+            <div class="ifimgen-status warn" id="ifimgen_natural_warn" style="display:none"></div>
         </div>
         <div class="ifimgen-box">
             ${boxTitle('sparkles', t('box_frame'))}
