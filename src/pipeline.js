@@ -5,7 +5,7 @@
 //   render each prompt -> insert in place. Each image is recorded in message.extra.ifimgen so it can be regenerated later.
 // Regenerate (one image / all images) re-runs step 2 (+3) from the STORED document; "regen scene" / Generate re-run step 1.
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
-import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
+import { renderPlannerPrompt, parsePlan, findPreset, presetDialect, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
@@ -18,6 +18,8 @@ import { clamp } from './util.js';
 /** @typedef {{ url:string, scene:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} TestRecord */
 
 const MAX_TEST_IMAGES = 60;
+/** Safety net: a render whose reply never arrives is released after this long (renderRaw watchdog). */
+const RENDER_TIMEOUT_MS = 10 * 60 * 1000;
 /** Per-step stopwatch: `const tm = timer(); ...; tm.lap('scene'); ...; tm.summary()` -> "scene 38s · prompts 12s · render 21s". */
 function timer() {
     const laps = [];
@@ -195,7 +197,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const g = settings.generate;
         const preset = findPreset(settings, presetId ?? g.presetId);
         const { system, user } = renderPlannerPrompt(preset, {
-            paragraphs, count, dialect: g.dialect, sceneDoc: docWords(ctx, sceneDoc), fixed, context,
+            paragraphs, count, dialect: presetDialect(preset, g.dialect), sceneDoc: docWords(ctx, sceneDoc), fixed, context,
             roster: rosterText(settings, chatIdentity(ctx)),
         });
         const reply = await llm.chat({ system, user, signal });
@@ -218,15 +220,16 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const ents = resolveEntities(settings, { text: scenes.join('\n'), ...ident });
         const shots = scenes.map(scene => expandScene({ scene, characters: ents.characters, personas: ents.personas }));
         for (const ex of shots) if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
+        const dialect = effectiveDialect(settings);
         let refined = scenes.map(() => '');
         if (g.mode === 'refine') {
-            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, setting: docWords(ctx, setting), shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
+            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect, setting: docWords(ctx, setting), shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
             refined = parseRefined(await llm.chat({ ...msgs, signal }), scenes.length);
             if (refined.every(r => !r)) throw new Error('Refine LLM returned no usable prompts.');
             refined.forEach((r, i) => { if (!r) log(`refine: shot ${i + 1} missing in reply, falling back to the expanded draft`); });
         }
         return shots.map((ex, i) => {
-            const { prompt, negative } = compilePrompt({ scene: refined[i] || ex.text, ...ents, settings, backend: backendId, merged: Boolean(refined[i]) });
+            const { prompt, negative } = compilePrompt({ scene: refined[i] || ex.text, ...ents, settings, backend: backendId, merged: Boolean(refined[i]), dialect });
             return { prompt, negative, ents, expanded: ex.text, refined: refined[i], unknown: ex.unknown };
         });
     }
@@ -247,13 +250,14 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const ident = chatIdentity(ctx);
         const ents = resolveEntities(settings, { text: scene, ...ident });
         const ex = expandScene({ scene, characters: ents.characters, personas: ents.personas });
-        const plan = compilePrompt({ scene: ex.text, ...ents, settings, backend: backendId, merged: false });
+        const dialect = effectiveDialect(settings);
+        const plan = compilePrompt({ scene: ex.text, ...ents, settings, backend: backendId, merged: false, dialect });
         let refine = null;
         try {
-            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect: g.dialect, shots: [{ expanded: ex.text, used: ex.used }], characters: ents.characters, personas: ents.personas, style: ents.style });
+            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect, shots: [{ expanded: ex.text, used: ex.used }], characters: ents.characters, personas: ents.personas, style: ents.style });
             const refined = parseRefined(await llm.chat({ ...msgs, signal }), 1)[0];
             if (!refined) throw new Error('Refine LLM returned an empty prompt.');
-            refine = { refined, ...compilePrompt({ scene: refined, ...ents, settings, backend: backendId, merged: true }) };
+            refine = { refined, ...compilePrompt({ scene: refined, ...ents, settings, backend: backendId, merged: true, dialect }) };
         } catch (e) {
             if (e?.name === 'AbortError') throw e;
             refine = { error: e.message };
@@ -267,7 +271,25 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const params = effectiveParams(settings, backend.id);
         status('rendering…');
         const t0 = Date.now();
-        const b64 = await backend.generate({ prompt, negative, params }, signal);
+        // Watchdog: a response that never arrives (proxy queue stall, dropped connection, backend finished but the
+        // reply was lost) must not leave the job in "rendering…" forever - that would keep the inflight slot busy and
+        // block every Generate / Regenerate for this message / entity until the page is reloaded.
+        const guard = new AbortController();
+        const onAbort = () => guard.abort();
+        signal?.addEventListener('abort', onAbort, { once: true });
+        const watchdog = setTimeout(() => guard.abort(), RENDER_TIMEOUT_MS);
+        let b64;
+        try {
+            b64 = await abortable(backend.generate({ prompt, negative, params }, guard.signal), guard.signal);
+        } catch (e) {
+            if (e?.name === 'AbortError' && !signal?.aborted) {
+                throw new Error(`Image backend (${backend.id}) did not answer within ${Math.round(RENDER_TIMEOUT_MS / 60000)} min - the job was released. Check the proxy / backend queue and try again.`);
+            }
+            throw e;
+        } finally {
+            clearTimeout(watchdog);
+            signal?.removeEventListener('abort', onAbort);
+        }
         const t1 = Date.now();
         const url = safeImageUrl(await saveImage(b64, folder || ctx.characters?.[ctx.characterId]?.name || 'IF_Imgen'));
         log(`render: backend ${fmtMs(t1 - t0)} (${backend.id} ${params.model || ''} ${params.width}x${params.height} ${params.steps} steps) · save ${fmtMs(Date.now() - t1)}`);
@@ -639,7 +661,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const e = entityOf(kind, id);
         const g = settings.generate;
         const style = settings.data.styles.find(s => s.id === settings.defaultStyleId) ?? null;
-        const opt = { entity: e, dialect: g.dialect, shot: shot ?? e.profile.shot, sfw: sfw ?? e.profile.sfw };
+        const opt = { entity: e, dialect: effectiveDialect(settings), shot: shot ?? e.profile.shot, sfw: sfw ?? e.profile.sfw };
         let draft = '', source = 'draft';
         if (useLlm) {
             const msgs = buildProfilePrompt({ system: g.profileSystem, style, label: kind === 'personas' ? 'user persona' : 'character', ...opt });
@@ -651,7 +673,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         // merged: the draft already carries the base look (LLM folded it in / profileDraft() starts with it) -> the compiler
         // must not prepend the entity tags again; LoRAs, negatives, style and quality prefix still apply.
         const ents = { characters: kind === 'characters' ? [e] : [], personas: kind === 'personas' ? [e] : [], style };
-        const { prompt, negative } = compilePrompt({ scene: draft, ...ents, settings, backend: backends.active().id, merged: true });
+        const { prompt, negative } = compilePrompt({ scene: draft, ...ents, settings, backend: backends.active().id, merged: true, dialect: opt.dialect });
         return { draft, prompt, negative, source, shot: opt.shot, sfw: opt.sfw };
     }
 
@@ -677,7 +699,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if (edited) {
                 const style = settings.data.styles.find(s => s.id === settings.defaultStyleId) ?? null;
                 const ents = { characters: kind === 'characters' ? [e] : [], personas: kind === 'personas' ? [e] : [], style };
-                const c = compilePrompt({ scene: edited, ...ents, settings, backend: backends.active().id, merged: true });
+                const c = compilePrompt({ scene: edited, ...ents, settings, backend: backends.active().id, merged: true, dialect: effectiveDialect(settings) });
                 p = { draft: edited, prompt: c.prompt, negative: c.negative, source: 'edited', shot: shot ?? e.profile.shot, sfw: sfw ?? e.profile.sfw };
             } else {
                 if (useLlm) status('writing portrait prompt…');
@@ -693,6 +715,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const ctx = getContext();
             const { url, backend, model } = await abortable(renderRaw(ctx, { prompt: p.prompt, negative: p.negative }, controller.signal, status, profileFolder(ctx, e)), controller.signal);
             tm.lap('image');
+            // The picture exists from here on: release the job slot NOW so the entity panel flips back to
+            // Generate / Regenerate the moment the image is in, whatever happens in the bookkeeping below.
+            if (inflight.get(key) === controller) end(key);
             const rec = { url, prompt: p.prompt, negative: p.negative, draft: p.draft, shot: p.shot, sfw: p.sfw, backend, model, at: Date.now() };
             const prof = e.profile;
             if (prof.current) prof.history = [prof.current, ...prof.history].slice(0, PROFILE_VERSIONS);
@@ -762,7 +787,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         runTest, regenerateTest, removeTest, testImages: () => testList().slice(),
         profileImage, profilePrompt, profileSwitch, profileRemove, profileImages,
         profileRunning: id => { const c = inflight.get(PROFILE_KEY(id)); return Boolean(c && !c.signal.aborted); },
-        cancelProfile: id => inflight.get(PROFILE_KEY(id))?.abort(),
+        // Cancel releases the slot immediately (not when the request eventually settles), so Generate / Regenerate
+        // is available again right away even if the backend never answers.
+        cancelProfile: id => { const key = PROFILE_KEY(id); const c = inflight.get(key); if (!c) return; c.abort(); end(key); },
         sceneDoc: messageId => sceneDocOf(getContext().chat[messageId]),
         cancel(messageId) {
             if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }

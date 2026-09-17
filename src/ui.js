@@ -360,7 +360,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     $('ifimgen_preset_saveas').addEventListener('click', async () => {
         const name = await askPresetName('');
         if (!name) return;
-        const p = createPreset({ name: String(name), system: presetText.value });
+        const p = createPreset({ name: String(name), system: presetText.value, dialect: curPreset().dialect });
         presetDrafts.delete(g.presetId); // the edited text now lives in the new preset
         settings.data.presets.push(p); g.presetId = p.id; save(); fillPresets(); status('ifimgen_gen_status', t('st_preset_saved'), 'ok');
     });

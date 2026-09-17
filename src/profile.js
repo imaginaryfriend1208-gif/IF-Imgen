@@ -35,7 +35,7 @@ export const PROFILE_FRAMING_RULES = {
 
 export const PROFILE_DIALECT_RULES = {
     tags: 'Write comma-separated danbooru-style tags (lowercase, spaces not underscores), 25-45 tags, most important first: count tag (1girl / 1boy / 1other) and solo, the framing tag (portrait / upper body / full body), looking at viewer, then hair, eyes, face and body from the base look, every visible garment with its colour, the expression, the pose, the background, the lighting. No sentences.',
-    natural: 'Write ONE natural-language paragraph of 60-110 words: the person first (face, hair, eyes, body, then the visible clothing with colours), then expression and pose, then background and lighting. No tag lists, no headings.',
+    natural: 'Write ONE natural-language paragraph of 60-110 words for a model that reads sentences (Flux / Krea): the framing in one sentence (head-and-shoulders / upper-body / full-body portrait, at eye level, looking at the viewer), then the person with their name first (face, hair, eyes, body, then the visible clothing top to bottom with colours), then expression and pose, then a plain background and ONE light sentence (source, direction, quality, tone). If the base look is given as tags, rewrite it into sentences (1girl -> a young woman; drop quality words and weights). No tag lists, no headings, no brackets, no negatives.',
 };
 
 const shotOf = shot => PROFILE_SHOTS.includes(shot) ? shot : 'portrait';

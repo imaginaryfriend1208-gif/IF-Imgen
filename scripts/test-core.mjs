@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 // IF Imgen - pure-module tests (no DOM, no ST). Run: node scripts/test-core.mjs
 import assert from 'node:assert/strict';
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, listImages, safeImageUrl, IMG_MARK, migrateLegacyImages, replaceImageUrl, removeImageByUrl } from '../src/paragraphs.js';
-import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset, extractJsonArray } from '../src/presets.js';
+import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset, extractJsonArray, presetDialect, effectiveDialect } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
-import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
+import { compilePrompt, effectiveParams, modelParams, hasProfile, softenTags } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
 import { collectChatImages, collectProfileImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
@@ -92,7 +92,16 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     const mine = createPreset({ name: 'mine', system: 'custom {{count}} {{dialect_rule}}' });
     const withDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', sceneDoc: doc });
     assert.ok(withDoc.system.startsWith('custom 1') && withDoc.system.includes('SCENE DOCUMENT RULES') && withDoc.system.includes('WEARING lines with colours and state'));
-    assert.ok(withDoc.system.includes('90-150 words') && !withDoc.system.includes('{{'), 'doc length rule follows the dialect, no leftover placeholder');
+    assert.ok(withDoc.system.includes('110-170 words') && !withDoc.system.includes('{{'), 'doc length rule follows the dialect, no leftover placeholder');
+    assert.ok(withDoc.system.includes('EXAMPLE with a document (prose)'), 'doc example follows the dialect');
+    // Krea / NAI presets force their dialect regardless of the global setting; length macros follow doc / no doc.
+    const krea = BUILTIN_PRESETS.find(p => p.id === 'krea_natural'), nai = BUILTIN_PRESETS.find(p => p.id === 'nai_tags');
+    const k = renderPlannerPrompt(krea, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
+    assert.ok(k.system.includes('PROSE PROMPT') && k.system.includes('80-130 words') && k.system.includes('Krea / Flux') && !k.system.includes('TAG PROMPT') && !k.system.includes('{{'));
+    const n = renderPlannerPrompt(nai, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', sceneDoc: doc });
+    assert.ok(n.system.includes('TAG PROMPT') && n.system.includes('40-65 tags') && n.system.includes('NovelAI') && n.system.includes('CONTACT CHAIN') && !n.system.includes('PROSE PROMPT') && !n.system.includes('{{'));
+    assert.equal(presetDialect(krea, 'tags'), 'natural'); assert.equal(presetDialect(BUILTIN_PRESETS[0], 'natural'), 'natural'); assert.equal(presetDialect(BUILTIN_PRESETS[0], 'bogus'), 'tags');
+    assert.equal(createPreset({ name: 'fork', system: 'x', dialect: 'natural' }).dialect, 'natural'); assert.equal(createPreset({ name: 'plain', system: 'x' }).dialect, undefined);
     assert.ok(withDoc.system.includes('Do NOT replace it with a $keyword.outfit token'), 'clothing written in words, not as a facet token');
     assert.ok(withDoc.user.includes('translate the SCENE DOCUMENT'));
     const noDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
@@ -318,6 +327,24 @@ test('compilePrompt merged=true: cast fragments not prepended (refine already me
     assert.ok(a.prompt.includes('1girl, silver hair') && !b.prompt.includes('1girl, silver hair'));
     assert.ok(b.prompt.includes('<lora:lyna') && b.prompt.includes('anime style') && b.prompt.includes('REFINED TEXT'));
     assert.equal(a.negative, b.negative);
+});
+
+test('compilePrompt natural (Krea): softened cast, sentences not comma lists, no quality prefix, LoRAs kept; preset dialect wins over global', () => {
+    const ents = resolveEntities(s, { text: '$lyna x', charAvatar: 'lyna.png' });
+    const nat = compilePrompt({ scene: 'She leans on the railing, looking at the viewer', ...ents, settings: s, backend: 'sd', dialect: 'natural' });
+    assert.ok(!nat.prompt.includes('masterpiece'), 'no quality prefix in prose');
+    assert.ok(nat.prompt.includes('a young woman, silver hair'), '1girl -> a young woman: ' + nat.prompt);
+    assert.ok(nat.prompt.includes('<lora:lyna'), 'LoRA token kept');
+    assert.ok(/silver hair[^.]*\. /.test(nat.prompt) && nat.prompt.endsWith('viewer.'), 'fragments joined as sentences: ' + nat.prompt);
+    assert.equal(softenTags('masterpiece, 1girl, (long_hair:1.2), {blue eyes}, [smile], score_9'), 'a young woman, long hair, blue eyes, smile');
+    assert.equal(softenTags('A tall man with a scar. He wears a black coat, unbuttoned.'), 'A tall man with a scar. He wears a black coat, unbuttoned.');
+    // effectiveDialect: preset forced dialect beats generate.dialect; plain presets follow the global one
+    const st = defaultSettings(); st.generate.dialect = 'tags';
+    st.generate.presetId = 'krea_natural'; assert.equal(effectiveDialect(st), 'natural');
+    st.generate.presetId = 'nai_tags'; st.generate.dialect = 'natural'; assert.equal(effectiveDialect(st), 'tags');
+    st.generate.presetId = BUILTIN_PRESETS[0].id; assert.equal(effectiveDialect(st), 'natural');
+    const tagsOnly = compilePrompt({ scene: 'x', ...ents, settings: s, backend: 'sd' });
+    assert.ok(tagsOnly.prompt.includes('1girl, silver hair'), 'default path unchanged (global tags)');
 });
 
 test('planner rules mention detail tokens', () => {
@@ -581,6 +608,43 @@ await testAsync('profile pipeline: ignored abort releases the job and bound prof
     assert.equal(rec.url, '/user/images/Card%20A/profile.png');
     assert.deepEqual(folders, ['Card A']);
     assert.equal(ready.profileImages()[0].current, true);
+});
+
+await testAsync('profile pipeline: job slot is released the moment the render resolves (UI must flip Cancel -> Regenerate), and cancelProfile releases immediately', async () => {
+    const makeSettings = () => {
+        const st = defaultSettings();
+        const entity = createEntity('characters', { name: 'Profile Entry', keyword: 'profile_entry', tags: '1girl, black hair' });
+        st.data.characters.push(entity);
+        return { st, entity };
+    };
+    const ctx = { characters: [{ name: 'Card A', avatar: 'a.png' }], characterId: 0, chat: [] };
+    const rendered = makeSettings();
+    const callbackRunning = [], running = [];
+    let ready;
+    ready = createPipeline({
+        settings: rendered.st, getContext: () => ctx,
+        backends: { active: () => ({ id: 'sd', generate: async () => 'base64' }) },
+        llm: { chat: async () => '' }, saveImage: async () => '/profile.png',
+        save: () => callbackRunning.push(ready.profileRunning(rendered.entity.id)),
+        onChange: () => callbackRunning.push(ready.profileRunning(rendered.entity.id)),
+    });
+    ready.onJobs(st => running.push(st.running));
+    const rec = await ready.profileImage({ kind: 'characters', id: rendered.entity.id, useLlm: false });
+    assert.deepEqual(callbackRunning, [false, false], 'slot released before save/onChange');
+    assert.equal(running.at(-1), 0); assert.equal(ready.profileRunning(rendered.entity.id), false);
+    assert.ok(rec.url);
+
+    const stalledData = makeSettings();
+    const stalled = createPipeline({
+        settings: stalledData.st, getContext: () => ctx,
+        backends: { active: () => ({ id: 'sd', generate: () => new Promise(() => {}) }) },
+        llm: { chat: async () => '' }, saveImage: async () => '/unused.png',
+    });
+    const pending = stalled.profileImage({ kind: 'characters', id: stalledData.entity.id, draft: 'solo portrait', useLlm: false });
+    assert.equal(stalled.profileRunning(stalledData.entity.id), true);
+    stalled.cancelProfile(stalledData.entity.id);
+    assert.equal(stalled.profileRunning(stalledData.entity.id), false);
+    assert.equal(await pending, null);
 });
 
 test('ui: every .ent-profile-* selector the entity editor queries exists in the entityPanel markup (v0.11.0 mounted nothing because these were missing)', () => {

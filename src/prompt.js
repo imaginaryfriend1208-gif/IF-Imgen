@@ -21,11 +21,55 @@ export function stripKeywordTokens(scene, entities) {
     return s.replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').trim();
 }
 
+const COUNT_WORDS = {
+    '1girl': 'a young woman', '2girls': 'two young women', '3girls': 'three young women', 'multiple girls': 'several young women',
+    '1boy': 'a young man', '2boys': 'two young men', '3boys': 'three young men', 'multiple boys': 'several young men',
+    '1other': 'one person', 'solo': 'alone', 'no humans': 'an empty scene without people',
+};
+const QUALITY_WORDS = /^(masterpiece|best quality|amazing quality|very aesthetic|absurdres|highres|high resolution|ultra[- ]detailed|highly detailed|extremely detailed|8k|4k|uhd|hdr|newest|very awa|score[ _]\d+([ _]up)?|source[ _]\w+|rating[ _]\w+|safe|general|sensitive|questionable|explicit|nsfw|sfw)$/i;
+
 /**
- * @param {{ scene:string, characters:object[], personas:object[], style:object|null, settings:object, backend:'sd'|'nai', merged?:boolean }} a
+ * Turn a comma-separated tag fragment into prose-friendly text for models that read sentences (Flux / Krea):
+ * drops weight syntax ((tag:1.3), {tag}, [tag]), quality / rating tags and underscores, rewrites count tags
+ * (1girl -> a young woman) and joins the rest with commas into one clause. Text that already looks like prose
+ * (has sentence punctuation, few commas) is returned as is, minus weights.
+ */
+export function softenTags(text) {
+    let s = String(text ?? '').trim();
+    if (!s) return '';
+    s = s.replace(LORA_RE, '').replace(/\(([^()]*?):\s*-?\d+(?:\.\d+)?\)/g, '$1').replace(/[{}[\]()]/g, '').replace(/_/g, ' ');
+    const items = s.split(',').map(x => x.trim()).filter(Boolean);
+    const proseLike = /[.!?;]/.test(s) && items.some(x => x.split(/\s+/).length > 5);
+    if (proseLike) return items.join(', ');
+    const out = [];
+    for (const it of items) {
+        const low = it.toLowerCase();
+        if (QUALITY_WORDS.test(low)) continue;
+        out.push(COUNT_WORDS[low] ?? it);
+    }
+    return out.join(', ');
+}
+
+/** Join prose fragments into sentences: each non-empty part ends with a full stop. */
+function joinProse(...parts) {
+    const out = [];
+    for (const p of parts.flat()) {
+        let s = String(p ?? '').trim().replace(/^[,.\s]+|[,\s]+$/g, '').trim();
+        if (!s) continue;
+        if (!/[.!?]$/.test(s)) s += '.';
+        out.push(s);
+    }
+    return out.join(' ');
+}
+
+/**
+ * @param {{ scene:string, characters:object[], personas:object[], style:object|null, settings:object, backend:'sd'|'nai', merged?:boolean, dialect?:string }} a
  *   <lora:...> tags stay in the prompt; in workflow mode the sd backend turns them into LoRA nodes.
  *   merged=true: `scene` already contains the cast (refine mode) -> character/persona fragments are NOT prepended;
  *   their LoRAs and negatives still apply. Quality prefix and style are always handled here.
+ *   dialect: effective dialect (preset-forced or global); defaults to settings.generate.dialect.
+ *   natural: entity / style fragments go through softenTags(), parts are joined as sentences, no quality prefix;
+ *   the negative is still sent unless disabled (Krea users turn it off in Generate).
  * @returns {{ prompt:string, negative:string }}
  */
 export function compilePrompt(a) {
@@ -33,22 +77,35 @@ export function compilePrompt(a) {
     const ents = [...a.characters, ...a.personas];
     const styleList = a.style ? [a.style] : [];
     const all = [...styleList, ...ents];
-    const natural = g.dialect === 'natural';
+    const natural = (a.dialect ?? g.dialect) === 'natural';
     const scene = stripKeywordTokens(a.scene, ents);
 
-    const pick = e => natural ? (e.natural || e.tags) : (e.tags || e.natural);
+    const pick = e => natural ? softenTags(e.natural || e.tags) : (e.tags || e.natural);
     const useQuality = g.useQualityPrefix !== false && !natural;
 
-    let prompt = joinTags(
-        lorasAt(all, 'front'),
-        useQuality ? g.qualityPrefix : '',
-        styleList.map(pick),
-        lorasAt(all, 'after_style'),
-        a.merged ? [] : a.characters.map(pick),
-        a.merged ? [] : a.personas.map(pick),
-        scene,
-        lorasAt(all, 'end'),
-    );
+    let prompt;
+    if (natural) {
+        // Prose: LoRA tags stay as separate tokens (the backend strips them into nodes); everything else is sentences.
+        const loras = [...lorasAt(all, 'front'), ...lorasAt(all, 'after_style'), ...lorasAt(all, 'end')].join(' ');
+        const body = joinProse(
+            styleList.map(pick),
+            a.merged ? [] : a.characters.map(pick),
+            a.merged ? [] : a.personas.map(pick),
+            scene,
+        );
+        prompt = [loras, body].filter(Boolean).join(' ');
+    } else {
+        prompt = joinTags(
+            lorasAt(all, 'front'),
+            useQuality ? g.qualityPrefix : '',
+            styleList.map(pick),
+            lorasAt(all, 'after_style'),
+            a.merged ? [] : a.characters.map(pick),
+            a.merged ? [] : a.personas.map(pick),
+            scene,
+            lorasAt(all, 'end'),
+        );
+    }
     // Negative disabled -> send nothing at all (entity negatives included), for models that take no negative.
     let negative = g.useNegative === false ? '' : joinTags(g.negative, all.map(e => e.negative));
 
