@@ -1,9 +1,32 @@
 // IF Imgen - unified entity model for characters / personas / styles. Pure module.
 import { uuid, normalizeText, splitList, escapeRegex } from './util.js';
 import { parseFacets, rosterLine } from './scene.js';
+import { PROFILE_SHOTS } from './profile.js';
 
 export const KINDS = ['characters', 'personas', 'styles'];
 export const LORA_POSITIONS = ['front', 'after_style', 'end'];
+/** Older profile images kept per entity (newest first). */
+export const PROFILE_VERSIONS = 8;
+
+/**
+ * Profile (avatar) image state of a character / persona: framing + SFW preference, the shown image and older
+ * versions. Stored on the entity so it survives Save / export / import.
+ * @returns {{ shot:string, sfw:boolean, current:object|null, history:object[] }}
+ */
+export function normalizeProfile(p) {
+    const src = p && typeof p === 'object' ? p : {};
+    const rec = r => r && typeof r === 'object' && r.url ? {
+        url: String(r.url), prompt: String(r.prompt ?? ''), negative: String(r.negative ?? ''), draft: String(r.draft ?? ''),
+        shot: PROFILE_SHOTS.includes(r.shot) ? r.shot : 'portrait', sfw: r.sfw !== false,
+        backend: String(r.backend ?? ''), model: String(r.model ?? ''), at: Number(r.at) || 0,
+    } : null;
+    return {
+        shot: PROFILE_SHOTS.includes(src.shot) ? src.shot : 'portrait',
+        sfw: src.sfw !== false,
+        current: rec(src.current),
+        history: (Array.isArray(src.history) ? src.history : []).map(rec).filter(Boolean).slice(0, PROFILE_VERSIONS),
+    };
+}
 
 export function createEntity(kind, partial = {}) {
     const e = {
@@ -26,6 +49,8 @@ export function createEntity(kind, partial = {}) {
             personas: splitList(partial.bind?.personas),     // ST persona avatar filenames (identity only)
             always: Boolean(partial.bind?.always),
         },
+        // Profile / avatar image (characters + personas only) - see src/profile.js.
+        profile: kind === 'styles' ? null : normalizeProfile(partial.profile),
         updatedAt: Date.now(),
     };
     return e;

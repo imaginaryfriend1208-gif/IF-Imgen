@@ -12,6 +12,8 @@ import { compareVersions } from '../src/util.js';
 import { parseFacets, facetsText, expandScene, expandSceneDoc, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM } from '../src/scene.js';
 import { rosterText, isBound } from '../src/entities.js';
 import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
+import { buildProfilePrompt, parseProfilePrompt, profileDraft, profileFacets, PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from '../src/profile.js';
+import { normalizeProfile, PROFILE_VERSIONS } from '../src/entities.js';
 
 let passed = 0;
 const test = (name, fn) => { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); process.exitCode = 1; } };
@@ -459,6 +461,70 @@ test('parsePlan: prompts closed with an ESCAPED quote (real planner reply) fall 
     assert.equal(r[2].prompt, 'normal one');
     assert.ok(r[3].prompt.includes('says "stay" and "raw" quotes!'), r[3].prompt);
 });
+test('profile image: prompt carries base look + details filtered by framing / SFW, style, framing + dialect rules; solo portrait contract', () => {
+    const e = createEntity('characters', { name: 'Yenka', keyword: 'yenka', tags: '1girl, black hair, parted bangs, black eyes', natural: 'Yenka is a small girl with dark parted hair',
+        facets: 'outfit: white button-up shirt, black skirt\nback: a big tattoo on the left shoulder blade\nnsfw: pierced navel\nface: a small mole under the left eye' });
+    // portrait + sfw: face yes, outfit yes, back (body) no, nsfw no
+    assert.deepEqual(profileFacets(e, { shot: 'portrait', sfw: true }).map(f => f.key), ['outfit', 'face']);
+    assert.deepEqual(profileFacets(e, { shot: 'full', sfw: true }).map(f => f.key), ['outfit', 'back', 'face']);
+    assert.deepEqual(profileFacets(e, { shot: 'full', sfw: false }).map(f => f.key), ['outfit', 'back', 'nsfw', 'face']);
+    const { system, user } = buildProfilePrompt({ entity: e, style, dialect: 'tags', shot: 'bust', sfw: true, label: 'character' });
+    assert.ok(!system.includes('{{framing_rule}}') && !system.includes('{{dialect_rule}}'), 'placeholders filled');
+    assert.ok(system.includes('waist up'), 'bust framing rule'); assert.ok(system.includes('danbooru'), 'tags dialect');
+    assert.ok(/solo/i.test(system) && /ALONE/.test(system) && /no other people/i.test(system), 'solo portrait contract');
+    assert.ok(user.includes('BASE LOOK (tags): 1girl, black hair') && user.includes('BASE LOOK (description): Yenka is'), 'both base looks handed over');
+    assert.ok(user.includes('outfit: white button-up shirt') && user.includes('face: a small mole') && !user.includes('pierced navel'), 'sfw drops nsfw detail');
+    assert.ok(user.includes('STYLE: anime style') && user.includes('FRAMING: bust') && user.includes('SAFE FOR WORK'), 'style + framing + sfw lines');
+    assert.ok(user.includes('PERSON (character): Yenka — token $yenka'));
+    const nat = buildProfilePrompt({ entity: e, style: null, dialect: 'natural', shot: 'full', sfw: false, system: 'X {{framing_rule}} Y {{dialect_rule}}' });
+    assert.ok(nat.system.startsWith('X FRAMING: full body') && nat.system.includes('natural-language paragraph'), 'custom system + natural dialect + full framing');
+    assert.ok(!nat.user.includes('STYLE:') && !nat.user.includes('SAFE FOR WORK') && nat.user.includes('nsfw: pierced navel'), 'nsfw allowed when sfw=false');
+    assert.ok(DEFAULT_PROFILE_SYSTEM.includes('{{framing_rule}}') && DEFAULT_PROFILE_SYSTEM.includes('{{dialect_rule}}'));
+    assert.deepEqual(PROFILE_SHOTS, ['portrait', 'bust', 'full']);
+});
+
+test('profile image: parseProfilePrompt accepts object / array / fenced / plain; profileDraft is a usable no-LLM fallback', () => {
+    assert.equal(parseProfilePrompt('{"prompt": "1girl, solo, portrait"}'), '1girl, solo, portrait');
+    assert.equal(parseProfilePrompt('```json\n[{"i":1,"prompt":"a portrait"}]\n```'), 'a portrait');
+    assert.equal(parseProfilePrompt('  plain text prompt  '), 'plain text prompt');
+    assert.equal(parseProfilePrompt(''), '');
+    const e = createEntity('personas', { name: 'Me', keyword: 'me', tags: '1boy, short brown hair', facets: 'outfit: grey hoodie\nnsfw: x' });
+    const d = profileDraft({ entity: e, dialect: 'tags', shot: 'portrait', sfw: true });
+    assert.ok(d.startsWith('solo, portrait') && d.includes('1boy, short brown hair') && d.includes('grey hoodie') && !d.includes(', x'), d);
+    const n = profileDraft({ entity: e, dialect: 'natural', shot: 'full', sfw: true });
+    assert.ok(n.startsWith('A full-body portrait of Me:') && n.includes('grey hoodie') && n.includes('looking at the viewer'), n);
+    // no base look at all -> still a prompt, not an empty string
+    assert.ok(profileDraft({ entity: createEntity('characters', { name: 'Nobody' }), dialect: 'tags' }).includes('solo'));
+});
+
+test('profile image: entity.profile normalized on create / import / export, styles have none; versions capped; compile merged=true keeps LoRA + style + negative but no duplicate base look', () => {
+    const rec = k => ({ url: `/img/${k}.png`, prompt: `p${k}`, shot: 'bust', sfw: false, at: k });
+    const many = Array.from({ length: PROFILE_VERSIONS + 4 }, (_, k) => rec(k + 1));
+    const e = createEntity('characters', { name: 'A', profile: { shot: 'full', sfw: false, current: rec(0), history: many } });
+    assert.equal(e.profile.shot, 'full'); assert.equal(e.profile.sfw, false);
+    assert.equal(e.profile.current.url, '/img/0.png'); assert.equal(e.profile.current.shot, 'bust');
+    assert.equal(e.profile.history.length, PROFILE_VERSIONS, 'history capped');
+    assert.deepEqual(normalizeProfile(undefined), { shot: 'portrait', sfw: true, current: null, history: [] });
+    assert.deepEqual(normalizeProfile({ shot: 'nope', current: { nourl: true }, history: [null, 'x', rec(9)] }).history.map(h => h.url), ['/img/9.png']);
+    assert.equal(createEntity('styles', { name: 'S', profile: { current: rec(1) } }).profile, null, 'styles carry no profile');
+    // Save-from-UI shape: createEntity(kind, { ...fields, profile: { ...base.profile, shot, sfw } }) keeps the image.
+    const resaved = createEntity('characters', { id: e.id, name: 'A2', profile: { ...e.profile, shot: 'portrait', sfw: true } });
+    assert.equal(resaved.profile.current.url, '/img/0.png'); assert.equal(resaved.profile.shot, 'portrait'); assert.equal(resaved.profile.history.length, PROFILE_VERSIONS);
+    // export -> import roundtrip keeps the profile
+    const lst = [];
+    importEntities('characters', lst, exportEntities('characters', [e]));
+    assert.equal(lst[0].profile.current.url, '/img/0.png');
+    // compile: the draft already contains the base look -> merged=true, entity tags not prepended, LoRA/style/negative still there
+    const ly = createEntity('characters', { name: 'Lyna', keyword: 'lyna', tags: '1girl, silver hair', negative: 'blue hair', loras: ['<lora:lyna:0.8>'] });
+    const st = defaultSettings(); st.data.styles.push(style); st.defaultStyleId = style.id;
+    const draft = profileDraft({ entity: ly, dialect: 'tags' });
+    const { prompt, negative } = compilePrompt({ scene: draft, characters: [ly], personas: [], style, settings: st, backend: 'sd', merged: true });
+    assert.equal(prompt.split('1girl, silver hair').length - 1, 1, 'base look appears once');
+    assert.ok(prompt.includes('<lora:lyna:0.8>') && prompt.includes('anime style') && prompt.startsWith('<lora:lyna:0.8>, masterpiece'), prompt);
+    assert.ok(negative.includes('blue hair') && negative.includes('realistic'));
+    assert.equal(typeof defaultSettings().generate.profileSystem, 'string');
+});
+
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }
 console.log(`PASS (${passed} cases)`);
 
