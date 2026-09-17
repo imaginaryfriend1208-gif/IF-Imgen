@@ -1,6 +1,7 @@
 // IF Imgen - settings schema. Everything lives in extension_settings.IF_Imgen.
 import { BUILTIN_PRESETS } from './presets.js';
 import { DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
+import { DEFAULT_PROFILE_SYSTEM } from './profile.js';
 
 export const MODULE = 'IF_Imgen';
 export const SETTINGS_VERSION = 3;
@@ -53,6 +54,7 @@ export function defaultSettings() {
             mode: 'plan',
             sceneSystem: DEFAULT_SCENE_SYSTEM,
             refineSystem: DEFAULT_REFINE_SYSTEM,
+            profileSystem: DEFAULT_PROFILE_SYSTEM, // ONE call: entity data -> portrait prompt (Characters / Personas -> Profile image)
             useQualityPrefix: true,
             qualityPrefix: 'masterpiece, best quality, amazing quality',
             useNegative: true,          // some models (e.g. Krea) take no negative prompt

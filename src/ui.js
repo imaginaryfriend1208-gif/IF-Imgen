@@ -8,6 +8,7 @@ import { modelParams, hasProfile } from './prompt.js';
 import { ICONS, btn, fileBtn } from './icons.js';
 import { mountGallery, galleryMarkup } from './gallery.js';
 import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
+import { PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from './profile.js';
 import { t, setLang, getLang, LANGS, FLAGS } from './i18n.js';
 
 // Labels are resolved at render time (t()) so the language switch re-renders everything.
@@ -492,6 +493,98 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             q('.ent-facets').value = facetsText(e.facets);
             q('.ent-always').checked = e.bind.always;
             renderBind(e);
+            renderProfile(e);
+        }
+
+        // ---- profile / avatar image (characters + personas). Rendered from the SAVED entity; the picture and its
+        // versions are stored on entity.profile (src/profile.js + pipeline.profileImage).
+        function renderProfile(e) {
+            if (isStyle) return;
+            const saved = e?.id ? list().find(x => x.id === e.id) : null;
+            const prof = saved?.profile ?? e?.profile ?? { shot: 'portrait', sfw: true, current: null, history: [] };
+            q('.ent-profile-shot').value = prof.shot ?? 'portrait';
+            q('.ent-profile-sfw').checked = prof.sfw !== false;
+            const pic = q('.ent-profile-pic');
+            const cur = prof.current ?? null;
+            pic.classList.toggle('has', Boolean(cur));
+            pic.innerHTML = cur ? `<img src="${escapeHtml(cur.url)}" alt="" title="${escapeHtml(cur.prompt ?? '')}">` : `<span class="ifimgen-note">${t('ph_profile_empty')}</span>`;
+            const running = Boolean(saved && pipeline.profileRunning?.(saved.id));
+            const gen = q('.ent-profile-gen');
+            gen.querySelector('span').textContent = t(running ? 'btn_profile_cancel' : cur ? 'btn_profile_regen' : 'btn_profile_gen');
+            gen.classList.toggle('danger', running); gen.classList.toggle('primary', !running);
+            gen.title = gen.querySelector('span').textContent;
+            for (const c of ['.ent-profile-edit', '.ent-profile-preview']) q(c).disabled = running || !saved;
+            q('.ent-profile-open').disabled = !cur;
+            q('.ent-profile-delete').disabled = running || !cur;
+            const ver = q('.ent-profile-versions');
+            const hist = prof.history ?? [];
+            ver.style.display = cur && hist.length ? '' : 'none';
+            ver.innerHTML = cur && hist.length ? `<span class="ifimgen-cap-k">${t('vw_versions')} (${hist.length + 1})</span><img class="cur" src="${escapeHtml(cur.url)}" title="${t('vw_ver_current')}">`
+                + hist.map(h => `<img data-url="${escapeHtml(h.url)}" src="${escapeHtml(h.url)}" title="${t('vw_ver_older')}">`).join('') : '';
+            const det = q('.ent-profile-prompt');
+            det.style.display = cur?.prompt ? '' : 'none';
+            if (cur?.prompt) { det.querySelector('summary').textContent = `${t('pv_profile_final')} · ${cur.shot ?? ''}${cur.sfw === false ? ' · nsfw' : ''}`; q('.ent-profile-prompt-text').textContent = cur.prompt; }
+        }
+        const profStatus = (text, cls = '') => { const n = q('.ent-profile-status'); n.textContent = text; n.className = `ifimgen-status ${cls}`; };
+        const savedEntity = () => (currentId ? list().find(x => x.id === currentId) : null) ?? null;
+        async function runProfile(draft) {
+            const saved = savedEntity();
+            if (!saved) return profStatus(t('st_profile_unsaved'), 'error');
+            if (pipeline.profileRunning?.(saved.id)) { pipeline.cancelProfile(saved.id); return; }
+            const shot = q('.ent-profile-shot').value, sfw = q('.ent-profile-sfw').checked, useLlm = q('.ent-profile-llm').checked;
+            renderProfile(saved);
+            try {
+                const rec = await pipeline.profileImage({ kind, id: saved.id, shot, sfw, draft, useLlm, onStatus: s => { profStatus(`${t('st_profile_running')} — ${s}`); renderProfile(saved); } });
+                if (rec) profStatus(t('st_profile_done'), 'ok');
+            } catch (err) { profStatus(err.message, 'error'); }
+            finally { renderProfile(savedEntity() ?? saved); }
+        }
+        if (!isStyle) {
+            q('.ent-profile-gen').addEventListener('click', () => runProfile(undefined));
+            q('.ent-profile-edit').addEventListener('click', async () => {
+                const saved = savedEntity();
+                if (!saved) return profStatus(t('st_profile_unsaved'), 'error');
+                const ctx = getContext();
+                let initial = saved.profile?.current?.draft || '';
+                if (!initial) {
+                    profStatus(t('st_asking'));
+                    try { initial = (await pipeline.profilePrompt({ kind, id: saved.id, shot: q('.ent-profile-shot').value, sfw: q('.ent-profile-sfw').checked, useLlm: q('.ent-profile-llm').checked })).draft; }
+                    catch (err) { profStatus(err.message, 'error'); return; }
+                    profStatus('');
+                }
+                const text = await ctx.callGenericPopup(t('vw_profile_edit_prompt'), ctx.POPUP_TYPE.INPUT, initial, { rows: 8, wide: true, okButton: t('btn_profile_gen') });
+                if (typeof text !== 'string' || !text.trim()) return;
+                await runProfile(text.trim());
+            });
+            q('.ent-profile-preview').addEventListener('click', async () => {
+                const saved = savedEntity();
+                if (!saved) return profStatus(t('st_profile_unsaved'), 'error');
+                profStatus(t('st_asking'));
+                try {
+                    const p = await pipeline.profilePrompt({ kind, id: saved.id, shot: q('.ent-profile-shot').value, sfw: q('.ent-profile-sfw').checked, useLlm: q('.ent-profile-llm').checked });
+                    const det = q('.ent-profile-prompt');
+                    det.style.display = ''; det.open = true;
+                    det.querySelector('summary').textContent = `${t('pv_profile_draft')} (${t(p.source === 'llm' ? 'pv_profile_src_llm' : 'pv_profile_src_draft')}) · ${t('pv_profile_final')}`;
+                    q('.ent-profile-prompt-text').textContent = `${p.draft}\n\n— ${t('pv_profile_final')} —\n${p.prompt}${p.negative ? `\n\n— negative —\n${p.negative}` : ''}`;
+                    profStatus('');
+                } catch (err) { profStatus(err.message, 'error'); }
+            });
+            q('.ent-profile-open').addEventListener('click', () => { const url = savedEntity()?.profile?.current?.url; if (url) window.open(url, '_blank'); });
+            q('.ent-profile-pic').addEventListener('click', () => { const url = savedEntity()?.profile?.current?.url; if (url) window.open(url, '_blank'); });
+            q('.ent-profile-delete').addEventListener('click', async () => {
+                const saved = savedEntity();
+                if (!saved?.profile?.current) return;
+                const ctx = getContext();
+                const ok = await ctx.callGenericPopup(t('vw_confirm_delete_profile'), ctx.POPUP_TYPE.CONFIRM);
+                if (ok !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
+                pipeline.profileRemove(kind, saved.id);
+                renderProfile(saved); profStatus(t('st_profile_deleted'), 'ok');
+            });
+            q('.ent-profile-versions').addEventListener('click', e => {
+                const im = e.target.closest('img[data-url]'); const saved = savedEntity();
+                if (!im || !saved) return;
+                if (pipeline.profileSwitch(kind, saved.id, im.dataset.url)) { renderProfile(saved); profStatus(t('st_profile_switched'), 'ok'); }
+            });
         }
         // Working copy of the binding lists while editing (committed on Save).
         let bindState = { chats: [], characters: [], personas: [] };
@@ -762,6 +855,9 @@ function generatePanel() {
                 <textarea id="ifimgen_refine_system" class="text_pole" rows="7"></textarea>
                 <div class="ifimgen-note">${t('note_refine')}</div>
             </div>
+            <div class="ifimgen-row"><label>${t('lbl_profile_system')}</label>${btn({ id: 'ifimgen_profile_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
+            <textarea id="ifimgen_profile_system" class="text_pole" rows="5"></textarea>
+            <div class="ifimgen-note">${t('note_profile_system')}</div>
         </div>
         <div class="ifimgen-box">
             ${boxTitle('brain', t('box_preset'))}
