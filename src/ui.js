@@ -1,5 +1,5 @@
 // IF Imgen - drawer UI: Settings / Characters / Personas / Styles / Gallery / How to use / Generate.
-import { escapeHtml, downloadJson, readFileAsText } from './util.js';
+import { escapeHtml, downloadJson, downloadUrl, readFileAsText } from './util.js';
 import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS } from './entities.js';
 import { allPresets, createPreset, overwritePreset, resetPreset, BUILTIN_PRESETS } from './presets.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
@@ -571,8 +571,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
                     profStatus('');
                 } catch (err) { profStatus(err.message, 'error'); }
             });
-            q('.ent-profile-open').addEventListener('click', () => { const url = savedEntity()?.profile?.current?.url; if (url) window.open(url, '_blank'); });
-            q('.ent-profile-pic').addEventListener('click', () => { const url = savedEntity()?.profile?.current?.url; if (url) window.open(url, '_blank'); });
+            q('.ent-profile-open').addEventListener('click', () => { const saved = savedEntity(); const url = saved?.profile?.current?.url; if (url) downloadUrl(url, `${String(saved.name || 'profile').replace(/[^\w\- ]/g, '_')}_profile.png`); });
+            q('.ent-profile-pic').addEventListener('click', () => { const saved = savedEntity(); const url = saved?.profile?.current?.url; if (url) downloadUrl(url, `${String(saved.name || 'profile').replace(/[^\w\- ]/g, '_')}_profile.png`); });
             q('.ent-profile-delete').addEventListener('click', async () => {
                 const saved = savedEntity();
                 if (!saved?.profile?.current) return;
@@ -753,7 +753,7 @@ function entityPanel({ kind, tab, label, icon, hint }) {
                         ${btn({ cls: 'ent-profile-gen primary', icon: 'image', label: t('btn_profile_gen') })}
                         ${btn({ cls: 'ent-profile-edit', icon: 'clipboard', title: t('btn_profile_edit') })}
                         ${btn({ cls: 'ent-profile-preview', icon: 'locate', title: t('btn_profile_preview') })}
-                        ${btn({ cls: 'ent-profile-open', icon: 'images', title: t('btn_profile_view') })}
+                        ${btn({ cls: 'ent-profile-open', icon: 'download', title: t('btn_profile_view') })}
                         ${btn({ cls: 'ent-profile-delete danger', icon: 'trash', title: t('btn_profile_delete') })}
                     </div>
                     <div class="ifimgen-lightbox-versions ent-profile-versions" style="display:none"></div>

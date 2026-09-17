@@ -1,6 +1,6 @@
 // IF Imgen - per-chat gallery + test images + image viewer (regenerate / edit / delete).
 import { listImages, safeImageUrl } from './paragraphs.js';
-import { escapeHtml } from './util.js';
+import { downloadUrl, escapeHtml } from './util.js';
 import { ICONS, btn } from './icons.js';
 import { t } from './i18n.js';
 
@@ -25,6 +25,11 @@ export function collectChatImages(chat) {
 /** Test records (settings.data.testImages) -> gallery items. */
 export function collectTestImages(records) {
     return (records ?? []).map(r => ({ url: r.url, messageId: -1, name: '', scene: r.scene ?? '', refined: '', prompt: r.prompt ?? '', negative: r.negative ?? '', test: true }));
+}
+
+/** Profile records from pipeline.profileImages() -> gallery items. */
+export function collectProfileImages(records) {
+    return (records ?? []).map(r => ({ url: r.url, messageId: -1, name: r.name ?? '', scene: '', refined: '', prompt: r.prompt ?? '', negative: r.negative ?? '', draft: r.draft ?? '', test: true, profile: { kind: r.kind, id: r.id, current: Boolean(r.current) } }));
 }
 
 /** Full-screen viewer shared by the Gallery tab and by clicking an image in chat. */
@@ -71,7 +76,8 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             const it = items[idx];
             img.src = it.url;
             const doc = it.test ? '' : (pipeline.sceneDoc?.(it.messageId) ?? '');
-            cap.innerHTML = `<b>#${idx + 1}/${items.length} · ${it.test ? t('vw_test') : `${t('vw_message')} ${it.messageId}`}</b>`
+            const head = it.profile ? `${t('vw_profile')} · ${escapeHtml(it.name)}${it.profile.current ? '' : ` · ${t('vw_ver_older')}`}` : it.test ? t('vw_test') : `${t('vw_message')} ${it.messageId}`;
+            cap.innerHTML = `<b>#${idx + 1}/${items.length} · ${head}</b>`
                 + (it.test ? '' : (doc
                     ? `<details class="ifimgen-cap-doc"><summary><span class="ifimgen-cap-k">${t('vw_scene_doc')}</span> ${escapeHtml(doc.split('\n')[0].slice(0, 120))}…</summary><pre>${escapeHtml(doc)}</pre></details>`
                     : `<div class="ifimgen-note">${t('vw_scene_doc_none')}</div>`))
@@ -96,7 +102,10 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             const it = items[idx];
             lock(true);
             try {
-                if (it.test) {
+                if (it.profile) {
+                    const fresh = await pipeline.profileImage({ kind: it.profile.kind, id: it.profile.id, draft: text, onStatus: s => setStatus(s) });
+                    if (fresh) { items[idx] = { ...it, url: fresh.url, prompt: fresh.prompt, draft: fresh.draft ?? it.draft, profile: { ...it.profile, current: true } }; show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
+                } else if (it.test) {
                     const fresh = await pipeline.regenerateTest(it.url, { prompt: text, onStatus: s => setStatus(s) });
                     if (fresh) { items[idx] = { ...it, url: fresh.url, prompt: fresh.prompt }; show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
                 } else {
@@ -111,7 +120,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         q('.lb-close').addEventListener('click', close);
         q('.lb-prev').addEventListener('click', () => step(-1));
         q('.lb-next').addEventListener('click', () => step(1));
-        q('.lb-open').addEventListener('click', () => window.open(items[idx].url, '_blank'));
+        q('.lb-open').addEventListener('click', () => downloadUrl(items[idx].url));
         q('.lb-jump').addEventListener('click', () => { close(); jumpTo(items[idx].messageId); });
         q('.lb-regen').addEventListener('click', () => doRegen(undefined));
         // Regen scene: step 1 again for the whole message, every image of it redrawn; the viewer list is refreshed from the records.
@@ -147,8 +156,8 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         q('.lb-edit').addEventListener('click', async () => {
             const ctx = getContext();
             const it = items[idx];
-            const label = it.test ? t('vw_edit_prompt_final') : t('vw_edit_prompt_scene');
-            const initial = it.test ? it.prompt : (it.scene || it.prompt || '');
+            const label = it.profile ? t('vw_profile_edit_prompt') : it.test ? t('vw_edit_prompt_final') : t('vw_edit_prompt_scene');
+            const initial = it.profile ? (it.draft || it.prompt || '') : it.test ? it.prompt : (it.scene || it.prompt || '');
             const text = await ctx.callGenericPopup(label, ctx.POPUP_TYPE.INPUT, initial, { rows: 8, wide: true, okButton: t('vw_regen') });
             if (typeof text !== 'string' || !text.trim()) return;
             await doRegen(text.trim());
@@ -161,7 +170,9 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             lock(true);
             try {
                 let next = null;
-                if (it.test) pipeline.removeTest(it.url); else next = await pipeline.removeImage(it.messageId, it.url);
+                if (it.profile) pipeline.profileRemove(it.profile.kind, it.profile.id, it.url);
+                else if (it.test) pipeline.removeTest(it.url);
+                else next = await pipeline.removeImage(it.messageId, it.url);
                 if (next) items[idx] = fromRec(it, next); else items.splice(idx, 1);
                 onChanged();
                 if (!items.length) return close();
@@ -191,7 +202,9 @@ export function mountGallery({ panel, getContext, viewer, pipeline }) {
     const info = panel.querySelector('.ifimgen-gallery-info');
     const tgrid = panel.querySelector('.ifimgen-gallery-test');
     const tinfo = panel.querySelector('.ifimgen-gallery-test-info');
-    let items = [], titems = [];
+    const pgrid = panel.querySelector('.ifimgen-gallery-profile');
+    const pinfo = panel.querySelector('.ifimgen-gallery-profile-info');
+    let items = [], titems = [], pitems = [];
 
     const thumbs = (list, cap) => list.map((it, i) => `
         <figure class="ifimgen-thumb" data-i="${i}" title="${escapeHtml(it.scene || it.prompt)}">
@@ -209,6 +222,10 @@ export function mountGallery({ panel, getContext, viewer, pipeline }) {
         titems = collectTestImages(pipeline?.testImages?.() ?? []);
         tinfo.textContent = titems.length ? t('st_test_count', { n: titems.length }) : t('st_test_empty');
         tgrid.innerHTML = thumbs(titems, it => escapeHtml((it.mode || 'test').toString()));
+
+        pitems = collectProfileImages(pipeline?.profileImages?.() ?? []);
+        pinfo.textContent = pitems.length ? t('st_profile_images_count', { n: pitems.length }) : t('st_profile_images_empty');
+        pgrid.innerHTML = thumbs(pitems, it => escapeHtml(it.name));
     }
 
     grid.addEventListener('click', e => {
@@ -218,6 +235,10 @@ export function mountGallery({ panel, getContext, viewer, pipeline }) {
     tgrid.addEventListener('click', e => {
         const fig = e.target.closest('.ifimgen-thumb');
         if (fig) viewer.open(titems, Number(fig.dataset.i));
+    });
+    pgrid.addEventListener('click', e => {
+        const fig = e.target.closest('.ifimgen-thumb');
+        if (fig) viewer.open(pitems, Number(fig.dataset.i));
     });
     panel.querySelector('.ifimgen-gallery-refresh').addEventListener('click', refresh);
     refresh();
@@ -238,6 +259,12 @@ export function galleryMarkup() {
             <div class="ifimgen-row"><span class="ifimgen-note ifimgen-gallery-test-info" style="flex:1"></span></div>
             <div class="ifimgen-note">${t('note_test_images')}</div>
             <div class="ifimgen-gallery ifimgen-gallery-test"></div>
+        </div>
+        <div class="ifimgen-box">
+            <div class="ifimgen-box-title">${ICONS.user} ${t('box_profile_images')}</div>
+            <div class="ifimgen-row"><span class="ifimgen-note ifimgen-gallery-profile-info" style="flex:1"></span></div>
+            <div class="ifimgen-note">${t('note_profile_images')}</div>
+            <div class="ifimgen-gallery ifimgen-gallery-profile"></div>
         </div>
     </div>`;
 }

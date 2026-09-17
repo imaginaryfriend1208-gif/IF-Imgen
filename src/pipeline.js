@@ -6,7 +6,7 @@
 // Regenerate (one image / all images) re-runs step 2 (+3) from the STORED document; "regen scene" / Generate re-run step 1.
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
-import { resolveEntities, rosterText } from './entities.js';
+import { resolveEntities, rosterText, isBound } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft } from './profile.js';
@@ -32,6 +32,19 @@ const fmtMs = ms => ms >= 10000 ? `${Math.round(ms / 1000)}s` : `${(ms / 1000).t
 // Regenerate keeps the replaced image as an older VERSION of the same slot (rec.history, newest first).
 const MAX_VERSIONS = 8;
 const stripHistory = r => { const { history, ...rest } = r; return rest; };
+
+/** Settle with p, but reject with AbortError the moment signal fires, even if p never settles. */
+export function abortable(p, signal) {
+    if (!signal) return p;
+    return new Promise((resolve, reject) => {
+        const onAbort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+        if (signal.aborted) return onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+        Promise.resolve(p).then(
+            v => { signal.removeEventListener('abort', onAbort); resolve(v); },
+            e => { signal.removeEventListener('abort', onAbort); reject(e); });
+    });
+}
 
 export function createPipeline({ settings, getContext, backends, llm, saveImage, save = () => {}, log = () => {}, onChange = () => {} }) {
     const inflight = new Map(); // messageId -> AbortController
@@ -587,6 +600,28 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     // ---- profile / avatar image of one character or persona (src/profile.js). Stored on the entity, not in any chat.
     const PROFILE_KEY = id => `profile:${id}`;
+    /** Folder of a profile picture = gallery folder of the ST card it belongs to (bound card, else the open card when bound to this chat), fallback entity name. */
+    function profileFolder(ctx, e) {
+        const cards = ctx.characters ?? [];
+        const bound = (e.bind?.characters ?? []).map(av => cards.find(c => c?.avatar === av)).find(Boolean);
+        if (bound?.name) return bound.name;
+        const open = cards[ctx.characterId];
+        if (open?.name && isBound(e, chatIdentity(ctx))) return open.name;
+        return e.name;
+    }
+    /** Every profile image (current + older versions) of every character/persona, newest first. */
+    function profileImages() {
+        const out = [];
+        for (const kind of ['characters', 'personas']) {
+            for (const e of settings.data?.[kind] ?? []) {
+                const prof = normalizeProfile(e.profile);
+                const push = (r, current) => out.push({ url: r.url, kind, id: e.id, name: e.name, prompt: r.prompt, negative: r.negative, draft: r.draft, shot: r.shot, sfw: r.sfw, at: r.at, current });
+                if (prof.current) push(prof.current, true);
+                prof.history.forEach(r => push(r, false));
+            }
+        }
+        return out.sort((a, b) => (b.at || 0) - (a.at || 0));
+    }
     function entityOf(kind, id) {
         if (kind !== 'characters' && kind !== 'personas') throw new Error('Profile images exist for characters and personas only.');
         const e = (settings.data[kind] ?? []).find(x => x.id === id);
@@ -629,7 +664,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     async function profileImage({ kind, id, shot, sfw, draft, useLlm = true, onStatus } = {}) {
         const e = entityOf(kind, id);
         const key = PROFILE_KEY(id);
-        if (inflight.has(key)) throw new Error('A profile image for this entry is already rendering.');
+        const prev = inflight.get(key);
+        if (prev && !prev.signal.aborted) throw new Error('A profile image for this entry is already rendering.');
+        if (prev) end(key); // cancelled earlier but its request never settled: release the stale job
         const controller = new AbortController();
         begin(key, controller);
         const status = s => { log(`profile ${e.name}: ${s}`); note(s); onStatus?.(s); };
@@ -644,16 +681,17 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
                 p = { draft: edited, prompt: c.prompt, negative: c.negative, source: 'edited', shot: shot ?? e.profile.shot, sfw: sfw ?? e.profile.sfw };
             } else {
                 if (useLlm) status('writing portrait prompt…');
-                try { p = await profilePrompt({ kind, id, shot, sfw, useLlm, signal: controller.signal }); }
+                try { p = await abortable(profilePrompt({ kind, id, shot, sfw, useLlm, signal: controller.signal }), controller.signal); }
                 catch (err) {
                     if (err?.name === 'AbortError') throw err;
                     log('profile: prompt LLM failed, using the deterministic draft', err.message);
-                    p = await profilePrompt({ kind, id, shot, sfw, useLlm: false });
+                    p = await abortable(profilePrompt({ kind, id, shot, sfw, useLlm: false }), controller.signal);
                 }
                 tm.lap('prompt');
             }
             log(`profile prompt (${p.source})`, p.prompt);
-            const { url, backend, model } = await renderRaw(getContext(), { prompt: p.prompt, negative: p.negative }, controller.signal, status, e.name);
+            const ctx = getContext();
+            const { url, backend, model } = await abortable(renderRaw(ctx, { prompt: p.prompt, negative: p.negative }, controller.signal, status, profileFolder(ctx, e)), controller.signal);
             tm.lap('image');
             const rec = { url, prompt: p.prompt, negative: p.negative, draft: p.draft, shot: p.shot, sfw: p.sfw, backend, model, at: Date.now() };
             const prof = e.profile;
@@ -669,7 +707,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             status(`error: ${err.message}`);
             throw err;
         } finally {
-            end(key);
+            if (inflight.get(key) === controller) end(key);
         }
     }
 
@@ -722,15 +760,15 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     return {
         run, regenerate, regenerateAll, regenerateScene, removeImage, switchVersion, clear, migrateChat,
         runTest, regenerateTest, removeTest, testImages: () => testList().slice(),
-        profileImage, profilePrompt, profileSwitch, profileRemove,
-        profileRunning: id => inflight.has(PROFILE_KEY(id)),
+        profileImage, profilePrompt, profileSwitch, profileRemove, profileImages,
+        profileRunning: id => { const c = inflight.get(PROFILE_KEY(id)); return Boolean(c && !c.signal.aborted); },
         cancelProfile: id => inflight.get(PROFILE_KEY(id))?.abort(),
         sceneDoc: messageId => sceneDocOf(getContext().chat[messageId]),
         cancel(messageId) {
             if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }
             inflight.get(messageId)?.abort();
         },
-        isRunning: id => inflight.has(id),
+        isRunning: id => { const c = inflight.get(id); return Boolean(c && !c.signal.aborted); },
         onJobs,
         recordFor: (messageId, url) => findRecord(getContext().chat[messageId] ?? {}, url),
         compilePreview: (scene, signal) => compileScene(getContext(), scene, backends.active().id, signal),

@@ -16,7 +16,7 @@ import { t, setLang } from './src/i18n.js';
 import { compareVersions } from './src/util.js';
 import { countImages, stripImagesLoose, IMG_MARK } from './src/paragraphs.js';
 
-const VERSION = '0.11.1';
+const VERSION = '0.11.2';
 const REPO_URL = 'https://github.com/imaginaryfriend1208-gif/IF-Imgen';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/imaginaryfriend1208-gif/IF-Imgen/main/manifest.json';
 // Direct message: Discord only links profiles by numeric user id (username diuenmii). Opens the profile -> Message.

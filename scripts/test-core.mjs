@@ -7,8 +7,9 @@ import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
 import { compilePrompt, effectiveParams, modelParams, hasProfile } from '../src/prompt.js';
 import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
-import { collectChatImages } from '../src/gallery.js';
+import { collectChatImages, collectProfileImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
+import { abortable, createPipeline } from '../src/pipeline.js';
 import { parseFacets, facetsText, expandScene, expandSceneDoc, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM } from '../src/scene.js';
 import { rosterText, isBound } from '../src/entities.js';
 import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
@@ -17,6 +18,9 @@ import { normalizeProfile, PROFILE_VERSIONS } from '../src/entities.js';
 
 let passed = 0;
 const test = (name, fn) => { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); process.exitCode = 1; } };
+
+const testAsync = async (name, fn) => { try { await fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}
+    ${e.message}`); process.exitCode = 1; } };
 
 const mes = 'She opened the door slowly.\n\nThe hall was dark, lit only by a single candle on the far table.\n\n```\ncode\n```\n\nHe smiled.';
 
@@ -523,6 +527,60 @@ test('profile image: entity.profile normalized on create / import / export, styl
     assert.ok(prompt.includes('<lora:lyna:0.8>') && prompt.includes('anime style') && prompt.startsWith('<lora:lyna:0.8>, masterpiece'), prompt);
     assert.ok(negative.includes('blue hair') && negative.includes('realistic'));
     assert.equal(typeof defaultSettings().generate.profileSystem, 'string');
+});
+
+await testAsync('abortable: resolves normally and aborts a never-settling promise immediately', async () => {
+    assert.equal(await abortable(Promise.resolve('ok')), 'ok');
+    const controller = new AbortController();
+    const waiting = abortable(new Promise(() => {}), controller.signal);
+    controller.abort();
+    await assert.rejects(waiting, err => err?.name === 'AbortError');
+});
+
+test('collectProfileImages maps profile records for the gallery viewer', () => {
+    const items = collectProfileImages([{ url: '/p.png', kind: 'characters', id: 'c1', name: 'Card A', prompt: 'final', negative: 'bad', draft: 'draft', current: false }]);
+    assert.deepEqual(items, [{ url: '/p.png', messageId: -1, name: 'Card A', scene: '', refined: '', prompt: 'final', negative: 'bad', draft: 'draft', test: true, profile: { kind: 'characters', id: 'c1', current: false } }]);
+});
+
+await testAsync('profile pipeline: ignored abort releases the job and bound profiles save in the card gallery folder', async () => {
+    const makeSettings = () => {
+        const st = defaultSettings();
+        const entity = createEntity('characters', { name: 'IF Entry', keyword: 'entry', tags: '1girl, red hair', bind: { characters: ['a.png'] } });
+        st.data.characters.push(entity);
+        return { st, entity };
+    };
+    const ctx = { characters: [{ name: 'Card A', avatar: 'a.png' }], characterId: 0, chat: [] };
+    const hanging = makeSettings();
+    let calls = 0;
+    const stalled = createPipeline({
+        settings: hanging.st, getContext: () => ctx,
+        backends: { active: () => ({ id: 'sd', generate: () => { calls++; return new Promise(() => {}); } }) },
+        llm: { chat: async () => '' }, saveImage: async () => '/unused.png',
+    });
+    const first = stalled.profileImage({ kind: 'characters', id: hanging.entity.id, useLlm: false });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(calls, 1); assert.equal(stalled.profileRunning(hanging.entity.id), true);
+    stalled.cancelProfile(hanging.entity.id);
+    assert.equal(stalled.profileRunning(hanging.entity.id), false);
+    const second = stalled.profileImage({ kind: 'characters', id: hanging.entity.id, useLlm: false });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(calls, 2, 'a second call starts immediately instead of throwing already rendering');
+    stalled.cancelProfile(hanging.entity.id);
+    assert.equal(await first, null);
+    assert.equal(await second, null);
+
+    const rendered = makeSettings();
+    const folders = [];
+    const ready = createPipeline({
+        settings: rendered.st, getContext: () => ctx,
+        backends: { active: () => ({ id: 'sd', generate: async () => 'base64' }) },
+        llm: { chat: async () => '' },
+        saveImage: async (_b64, folder) => { folders.push(folder); return '/user/images/Card%20A/profile.png'; },
+    });
+    const rec = await ready.profileImage({ kind: 'characters', id: rendered.entity.id, useLlm: false });
+    assert.equal(rec.url, '/user/images/Card%20A/profile.png');
+    assert.deepEqual(folders, ['Card A']);
+    assert.equal(ready.profileImages()[0].current, true);
 });
 
 test('ui: every .ent-profile-* selector the entity editor queries exists in the entityPanel markup (v0.11.0 mounted nothing because these were missing)', () => {

@@ -91,6 +91,21 @@ export function blobToBase64(blob) {
     });
 }
 
+/** Download an image URL as a file (fetch -> blob -> <a download>); falls back to opening it. */
+export async function downloadUrl(url, filename = '') {
+    try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename || decodeURIComponent(String(url).split('/').pop() || 'image.png');
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    } catch { window.open(url, '_blank'); }
+}
+
 export function downloadJson(filename, data) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
