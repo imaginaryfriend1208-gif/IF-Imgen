@@ -106,7 +106,7 @@ export function compilePrompt(a) {
         // Style: its one-sentence "lead" opens the prompt (medium / look in a few words - what Flux / Krea weigh most);
         // without a lead, the first sentence of the style text is used. The full style text closes the prompt, clipped.
         const styleLead = styleList.map(e => String(e.lead ?? '').trim() || clipProse(pick(e), 160));
-        const styleBody = styleList.map(e => (String(e.lead ?? '').trim() ? clipProse(pick(e), 350) : clipProse(pick(e).slice(styleLead[0]?.length ?? 0), 350)));
+        const styleBody = styleList.map(e => (String(e.lead ?? "").trim() ? pick(e) : pick(e).slice(styleLead[0]?.length ?? 0).replace(/^[\s.,;:]+/, '')));  // full style text at the end (never clipped - the style must reach the model)
         const body = joinProse(
             styleLead,
             scene,
