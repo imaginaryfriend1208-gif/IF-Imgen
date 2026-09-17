@@ -9,8 +9,6 @@ import { renderPlannerPrompt, parsePlan, findPreset } from './presets.js';
 import { resolveEntities, rosterText } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined } from './scene.js';
-import { buildProfilePrompt, parseProfilePrompt, profileDraft } from './profile.js';
-import { normalizeProfile, PROFILE_VERSIONS } from './entities.js';
 import { clamp } from './util.js';
 
 /** @typedef {{ url:string, p:number, scene:string, expanded:string, setting:string, refined:string, prompt:string, negative:string, mode:string, backend:string, model:string, at:number }} ImageRecord  (setting = the scene document the image was written from) */
@@ -248,15 +246,15 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         return { ents, expanded: ex.text, unknown: ex.unknown, plan, refine };
     }
 
-    /** Send a final prompt to the active backend and save the PNG. No compile step. `folder` = image folder name (default: the open character). */
-    async function renderRaw(ctx, { prompt, negative }, signal, status, folder = '') {
+    /** Send a final prompt to the active backend and save the PNG. No compile step. */
+    async function renderRaw(ctx, { prompt, negative }, signal, status) {
         const backend = backends.active();
         const params = effectiveParams(settings, backend.id);
         status('rendering…');
         const t0 = Date.now();
         const b64 = await backend.generate({ prompt, negative, params }, signal);
         const t1 = Date.now();
-        const url = safeImageUrl(await saveImage(b64, folder || ctx.characters?.[ctx.characterId]?.name || 'IF_Imgen'));
+        const url = safeImageUrl(await saveImage(b64, ctx.characters?.[ctx.characterId]?.name || 'IF_Imgen'));
         log(`render: backend ${fmtMs(t1 - t0)} (${backend.id} ${params.model || ''} ${params.width}x${params.height} ${params.steps} steps) · save ${fmtMs(Date.now() - t1)}`);
         return { url, backend: backend.id, model: params.model ?? '', ms: t1 - t0 };
     }
@@ -585,120 +583,6 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         if (i >= 0) { list.splice(i, 1); save(); }
     }
 
-    // ---- profile / avatar image of one character or persona (src/profile.js). Stored on the entity, not in any chat.
-    const PROFILE_KEY = id => `profile:${id}`;
-    function entityOf(kind, id) {
-        if (kind !== 'characters' && kind !== 'personas') throw new Error('Profile images exist for characters and personas only.');
-        const e = (settings.data[kind] ?? []).find(x => x.id === id);
-        if (!e) throw new Error('Entity not found - save it first.');
-        e.profile = normalizeProfile(e.profile);
-        return e;
-    }
-
-    /**
-     * Prompt of a profile image without rendering (preview): LLM draft from the stored data, or the deterministic
-     * draft when `useLlm` is false. Returns the compiled prompt too.
-     * @param {{ kind:string, id:string, shot?:string, sfw?:boolean, useLlm?:boolean, signal?:AbortSignal }} a
-     */
-    async function profilePrompt({ kind, id, shot, sfw, useLlm = true, signal }) {
-        const e = entityOf(kind, id);
-        const g = settings.generate;
-        const style = settings.data.styles.find(s => s.id === settings.defaultStyleId) ?? null;
-        const opt = { entity: e, dialect: g.dialect, shot: shot ?? e.profile.shot, sfw: sfw ?? e.profile.sfw };
-        let draft = '', source = 'draft';
-        if (useLlm) {
-            const msgs = buildProfilePrompt({ system: g.profileSystem, style, label: kind === 'personas' ? 'user persona' : 'character', ...opt });
-            const reply = await llm.chat({ ...msgs, signal });
-            draft = parseProfilePrompt(reply);
-            if (draft) source = 'llm'; else log('profile: LLM returned nothing usable, using the deterministic draft', String(reply ?? '').slice(0, 200));
-        }
-        if (!draft) draft = profileDraft(opt);
-        // merged: the draft already carries the base look (LLM folded it in / profileDraft() starts with it) -> the compiler
-        // must not prepend the entity tags again; LoRAs, negatives, style and quality prefix still apply.
-        const ents = { characters: kind === 'characters' ? [e] : [], personas: kind === 'personas' ? [e] : [], style };
-        const { prompt, negative } = compilePrompt({ scene: draft, ...ents, settings, backend: backends.active().id, merged: true });
-        return { draft, prompt, negative, source, shot: opt.shot, sfw: opt.sfw };
-    }
-
-    /**
-     * Generate (or regenerate) the profile image of an entity. The previous image becomes a version (entity.profile.history).
-     * @param {{ kind:string, id:string, shot?:string, sfw?:boolean, draft?:string, useLlm?:boolean, onStatus?:(s:string)=>void }} a
-     *   draft - prompt draft written by the user (Edit & regenerate): no LLM call, compiled as-is
-     * @returns {Promise<object|null>} the new profile record, null when cancelled
-     */
-    async function profileImage({ kind, id, shot, sfw, draft, useLlm = true, onStatus } = {}) {
-        const e = entityOf(kind, id);
-        const key = PROFILE_KEY(id);
-        if (inflight.has(key)) throw new Error('A profile image for this entry is already rendering.');
-        const controller = new AbortController();
-        begin(key, controller);
-        const status = s => { log(`profile ${e.name}: ${s}`); note(s); onStatus?.(s); };
-        const tm = timer();
-        try {
-            let p;
-            const edited = String(draft ?? '').trim();
-            if (edited) {
-                const style = settings.data.styles.find(s => s.id === settings.defaultStyleId) ?? null;
-                const ents = { characters: kind === 'characters' ? [e] : [], personas: kind === 'personas' ? [e] : [], style };
-                const c = compilePrompt({ scene: edited, ...ents, settings, backend: backends.active().id, merged: true });
-                p = { draft: edited, prompt: c.prompt, negative: c.negative, source: 'edited', shot: shot ?? e.profile.shot, sfw: sfw ?? e.profile.sfw };
-            } else {
-                if (useLlm) status('writing portrait prompt…');
-                try { p = await profilePrompt({ kind, id, shot, sfw, useLlm, signal: controller.signal }); }
-                catch (err) {
-                    if (err?.name === 'AbortError') throw err;
-                    log('profile: prompt LLM failed, using the deterministic draft', err.message);
-                    p = await profilePrompt({ kind, id, shot, sfw, useLlm: false });
-                }
-                tm.lap('prompt');
-            }
-            log(`profile prompt (${p.source})`, p.prompt);
-            const { url, backend, model } = await renderRaw(getContext(), { prompt: p.prompt, negative: p.negative }, controller.signal, status, e.name);
-            tm.lap('image');
-            const rec = { url, prompt: p.prompt, negative: p.negative, draft: p.draft, shot: p.shot, sfw: p.sfw, backend, model, at: Date.now() };
-            const prof = e.profile;
-            if (prof.current) prof.history = [prof.current, ...prof.history].slice(0, PROFILE_VERSIONS);
-            prof.current = rec; prof.shot = p.shot; prof.sfw = p.sfw;
-            e.updatedAt = Date.now();
-            save();
-            try { onChange(key); } catch { /* ignore */ }
-            status(`done in ${fmtMs(tm.total())} — ${tm.summary()}`);
-            return rec;
-        } catch (err) {
-            if (err?.name === 'AbortError') { status('cancelled'); return null; }
-            status(`error: ${err.message}`);
-            throw err;
-        } finally {
-            end(key);
-        }
-    }
-
-    /** Show an older profile version (`url` from profile.history) as the current one; the shown one moves into history. */
-    function profileSwitch(kind, id, url) {
-        const e = entityOf(kind, id);
-        const prof = e.profile;
-        const k = prof.history.findIndex(h => h.url === url);
-        if (k < 0) return null;
-        const next = prof.history[k];
-        prof.history = [...(prof.current ? [prof.current] : []), ...prof.history.filter((_, j) => j !== k)].slice(0, PROFILE_VERSIONS);
-        prof.current = next;
-        save();
-        return next;
-    }
-
-    /** Delete the shown profile image; the newest older version (if any) takes its place. Returns the new current or null. */
-    function profileRemove(kind, id, url) {
-        const e = entityOf(kind, id);
-        const prof = e.profile;
-        if (prof.current && (!url || prof.current.url === url)) {
-            prof.current = prof.history.shift() ?? null;
-        } else if (url) {
-            prof.history = prof.history.filter(h => h.url !== url);
-        }
-        save();
-        return prof.current;
-    }
-
     /**
      * Upgrade v0.1/v0.2 snippets (title form, raw URLs) in the current chat to the
      * bare form and keep their prompts in message.extra. Runs on chat load.
@@ -722,9 +606,6 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     return {
         run, regenerate, regenerateAll, regenerateScene, removeImage, switchVersion, clear, migrateChat,
         runTest, regenerateTest, removeTest, testImages: () => testList().slice(),
-        profileImage, profilePrompt, profileSwitch, profileRemove,
-        profileRunning: id => inflight.has(PROFILE_KEY(id)),
-        cancelProfile: id => inflight.get(PROFILE_KEY(id))?.abort(),
         sceneDoc: messageId => sceneDocOf(getContext().chat[messageId]),
         cancel(messageId) {
             if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }
