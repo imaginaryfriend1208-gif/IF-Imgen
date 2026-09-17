@@ -546,8 +546,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         const profStatus = (text, cls = '') => { const n = q('.ent-profile-status'); n.textContent = text; n.className = `ifimgen-status ${cls}`; };
         // Job start / end (this entry's profile render included) re-renders the box, so Generate <-> Cancel follows the
         // pipeline and can never stay stuck on a promise chain that was never resumed.
-        if (!isStyle && pipeline.onJobs) pipeline.onJobs(() => { const e = savedEntity(); if (e && q('.ent-profile-pic')) renderProfile(e); });
         const savedEntity = () => (currentId ? list().find(x => x.id === currentId) : null) ?? null;
+        if (!isStyle && pipeline.onJobs) pipeline.onJobs(() => { const e = savedEntity(); if (e && q('.ent-profile-pic')) renderProfile(e); });
         async function runProfile(draft) {
             const saved = savedEntity();
             if (!saved) return profStatus(t('st_profile_unsaved'), 'error');

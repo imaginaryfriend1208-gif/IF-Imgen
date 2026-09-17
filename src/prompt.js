@@ -103,11 +103,16 @@ export function compilePrompt(a) {
         // its opening sentences. Long style / look paragraphs placed first were dragging every image towards the
         // style's reference painters and the cast's ethnic markers instead of the scene. LoRA tags stay as tokens.
         const loras = [...lorasAt(all, 'front'), ...lorasAt(all, 'after_style'), ...lorasAt(all, 'end')].join(' ');
+        // Style: its one-sentence "lead" opens the prompt (medium / look in a few words - what Flux / Krea weigh most);
+        // without a lead, the first sentence of the style text is used. The full style text closes the prompt, clipped.
+        const styleLead = styleList.map(e => String(e.lead ?? '').trim() || clipProse(pick(e), 160));
+        const styleBody = styleList.map(e => (String(e.lead ?? '').trim() ? clipProse(pick(e), 350) : clipProse(pick(e).slice(styleLead[0]?.length ?? 0), 350)));
         const body = joinProse(
+            styleLead,
             scene,
             a.merged ? [] : a.characters.map(e => clipProse(pick(e), 220)),
             a.merged ? [] : a.personas.map(e => clipProse(pick(e), 220)),
-            styleList.map(e => clipProse(pick(e), 350)),
+            styleBody,
         );
         prompt = [loras, body].filter(Boolean).join(' ');
     } else {

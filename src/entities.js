@@ -36,7 +36,8 @@ export function createEntity(kind, partial = {}) {
         keyword: normalizeKeyword(partial.keyword || partial.name || ''),
         aliases: splitList(partial.aliases).map(normalizeKeyword).filter(Boolean),
         tags: String(partial.tags ?? '').trim(),        // danbooru tags
-        natural: String(partial.natural ?? '').trim(),  // natural-language description
+        natural: String(partial.natural ?? '').trim(),
+        lead: String(partial.lead ?? '').trim(),          // styles only: ONE short sentence placed at the head of prose prompts; the long natural text goes last  // natural-language description
         negative: String(partial.negative ?? '').trim(),
         facets: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.facets), // [{key:'back', text:'...'}] referenced as $keyword.back
         world: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.world),   // places, NPCs, recurring items: $keyword.apartment, $keyword.npc_william

@@ -335,8 +335,12 @@ test('compilePrompt natural (Krea): softened cast, sentences not comma lists, no
     assert.ok(!nat.prompt.includes('masterpiece'), 'no quality prefix in prose');
     assert.ok(nat.prompt.includes('a young woman, silver hair'), '1girl -> a young woman: ' + nat.prompt);
     assert.ok(nat.prompt.includes('<lora:lyna'), 'LoRA token kept');
-    // Order for prose models: scene first, then the cast clause, then the style; every part closed as a sentence.
-    assert.ok(nat.prompt.indexOf('She leans on the railing') < nat.prompt.indexOf('a young woman, silver hair') && nat.prompt.indexOf('silver hair') < nat.prompt.indexOf('anime style'), 'scene -> cast -> style: ' + nat.prompt);
+    // Order for prose models (style lead -> scene -> cast -> style body): the style's lead sentence opens the
+    // prompt so the model reads it first, the scene follows, the cast clause is folded in after, every part
+    // closed as a sentence.
+    const iLead = nat.prompt.indexOf('anime style, flat color'), iScene = nat.prompt.indexOf('She leans on the railing'), iCast = nat.prompt.indexOf('a young woman');
+    assert.ok(iLead >= 0 && iLead < iScene && iScene < iCast, 'style lead -> scene -> cast: ' + nat.prompt);
+    assert.ok(nat.prompt.endsWith('.'), 'closed as a sentence: ' + nat.prompt);
     assert.ok(/viewer\. a young woman/.test(nat.prompt) && nat.prompt.endsWith('.'), 'fragments joined as sentences: ' + nat.prompt);
     assert.equal(clipProse('First sentence here. Second one is longer and goes on. Third.', 30), 'First sentence here.');
     assert.equal(clipProse('short', 30), 'short');
@@ -583,7 +587,7 @@ test('profile image: parseProfilePrompt accepts object / array / fenced / plain;
     const d = profileDraft({ entity: e, dialect: 'tags', shot: 'portrait', sfw: true });
     assert.ok(d.startsWith('solo, portrait') && d.includes('1boy, short brown hair') && d.includes('grey hoodie') && !d.includes(', x'), d);
     const n = profileDraft({ entity: e, dialect: 'natural', shot: 'full', sfw: true });
-    assert.ok(n.startsWith('A full-body portrait of Me:') && n.includes('grey hoodie') && n.includes('looking at the viewer'), n);
+    assert.ok((n.startsWith('A full-body shot') && n.includes('feet')) && n.includes('grey hoodie') && n.includes('looking at the viewer'), n);
     // no base look at all -> still a prompt, not an empty string
     assert.ok(profileDraft({ entity: createEntity('characters', { name: 'Nobody' }), dialect: 'tags' }).includes('solo'));
 });
@@ -744,4 +748,12 @@ test('presets: Save overwrites in place (built-in -> override, user -> own recor
     const mine = createPreset({ name: 'Mine', system: 'a' }); st.data.presets.push(mine);
     assert.ok(overwritePreset(st, mine.id, 'b')); assert.equal(mine.system, 'b');
     assert.equal(overwritePreset(st, 'nope', 'x'), false);
+});
+
+test('index.js VERSION constant matches manifest.json (the header pill and update check read it)', () => {
+    const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+    const index = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const m = index.match(/^const VERSION = '([^']+)'/m);
+    assert.ok(m, 'VERSION constant present');
+    assert.equal(m[1], manifest.version);
 });
