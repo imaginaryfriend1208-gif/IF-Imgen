@@ -300,6 +300,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     $('ifimgen_scene_reset').addEventListener('click', () => { g.sceneSystem = DEFAULT_SCENE_SYSTEM; $('ifimgen_scene_system').value = g.sceneSystem; save(); });
     bind('ifimgen_refine_system', () => g.refineSystem, v => g.refineSystem = v);
     $('ifimgen_refine_reset').addEventListener('click', () => { g.refineSystem = DEFAULT_REFINE_SYSTEM; $('ifimgen_refine_system').value = g.refineSystem; save(); });
+    bind('ifimgen_profile_system', () => g.profileSystem, v => g.profileSystem = v);
+    $('ifimgen_profile_reset').addEventListener('click', () => { g.profileSystem = DEFAULT_PROFILE_SYSTEM; $('ifimgen_profile_system').value = g.profileSystem; save(); });
     showMode();
     bind('ifimgen_quality', () => g.qualityPrefix, v => g.qualityPrefix = v);
     bind('ifimgen_negative', () => g.negative, v => g.negative = v);
@@ -499,7 +501,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         // ---- profile / avatar image (characters + personas). Rendered from the SAVED entity; the picture and its
         // versions are stored on entity.profile (src/profile.js + pipeline.profileImage).
         function renderProfile(e) {
-            if (isStyle) return;
+            if (isStyle || !q('.ent-profile-pic')) return;
             const saved = e?.id ? list().find(x => x.id === e.id) : null;
             const prof = saved?.profile ?? e?.profile ?? { shot: 'portrait', sfw: true, current: null, history: [] };
             q('.ent-profile-shot').value = prof.shot ?? 'portrait';
@@ -539,7 +541,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             } catch (err) { profStatus(err.message, 'error'); }
             finally { renderProfile(savedEntity() ?? saved); }
         }
-        if (!isStyle) {
+        if (!isStyle && q('.ent-profile-gen')) {
             q('.ent-profile-gen').addEventListener('click', () => runProfile(undefined));
             q('.ent-profile-edit').addEventListener('click', async () => {
                 const saved = savedEntity();
@@ -631,7 +633,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
                 });
             }
             return createEntity(kind, {
-                id: base?.id, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
+                id: base?.id, profile: base?.profile, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
                 aliases: q('.ent-aliases').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value,
                 negative: q('.ent-negative').value, facets: q('.ent-facets').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
                 bind: { always: q('.ent-always').checked, chats: [...bindState.chats], characters: [...bindState.characters], personas: [...bindState.personas] },
@@ -737,6 +739,28 @@ function entityPanel({ kind, tab, label, icon, hint }) {
                 <div class="ifimgen-bind-pick"><select class="text_pole ent-bind-persona-select"></select>${btn({ cls: 'ent-bind-persona-add', icon: 'plus', title: t('btn_add_persona') })}</div></div>
             <div class="ifimgen-row"><label></label><div class="ifimgen-list ent-bind-personas"></div></div>
             <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-always"> ${t('lbl_always')}</label></div>
+        </div>
+        <div class="ifimgen-box">
+            ${boxTitle('image', t('box_profile'))}
+            <div class="ifimgen-note">${t('note_profile')}</div>
+            <div class="ifimgen-profile">
+                <div class="ifimgen-profile-pic ent-profile-pic"></div>
+                <div class="ifimgen-profile-side">
+                    <div class="ifimgen-row"><label>${t('lbl_framing')}</label><select class="text_pole ent-profile-shot">${PROFILE_SHOTS.map(s => `<option value="${s}">${t(`opt_shot_${s}`)}</option>`).join('')}</select></div>
+                    <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-profile-sfw" checked> ${t('lbl_profile_sfw')}</label></div>
+                    <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-profile-llm" checked> ${t('btn_profile_llm')}</label></div>
+                    <div class="ifimgen-row">
+                        ${btn({ cls: 'ent-profile-gen primary', icon: 'image', label: t('btn_profile_gen') })}
+                        ${btn({ cls: 'ent-profile-edit', icon: 'clipboard', title: t('btn_profile_edit') })}
+                        ${btn({ cls: 'ent-profile-preview', icon: 'locate', title: t('btn_profile_preview') })}
+                        ${btn({ cls: 'ent-profile-open', icon: 'images', title: t('btn_profile_view') })}
+                        ${btn({ cls: 'ent-profile-delete danger', icon: 'trash', title: t('btn_profile_delete') })}
+                    </div>
+                    <div class="ifimgen-lightbox-versions ent-profile-versions" style="display:none"></div>
+                    <details class="ent-profile-prompt" style="display:none"><summary></summary><pre class="ifimgen-pre ent-profile-prompt-text"></pre></details>
+                    <div class="ifimgen-status ent-profile-status"></div>
+                </div>
+            </div>
         </div>
         <div class="ifimgen-row">
             ${btn({ cls: 'ent-save primary', icon: 'save', label: t('btn_save') })}

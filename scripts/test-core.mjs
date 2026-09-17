@@ -525,6 +525,17 @@ test('profile image: entity.profile normalized on create / import / export, styl
     assert.equal(typeof defaultSettings().generate.profileSystem, 'string');
 });
 
+test('ui: every .ent-profile-* selector the entity editor queries exists in the entityPanel markup (v0.11.0 mounted nothing because these were missing)', () => {
+    const src = readFileSync(new URL('../src/ui.js', import.meta.url), 'utf8');
+    const used = [...new Set([...src.matchAll(/q\('\.(ent-profile-[a-z-]+)'\)/g)].map(m => m[1]))];
+    assert.ok(used.length >= 10, `expected the profile selectors to be queried, found ${used.length}`);
+    for (const cls of used) {
+        const inMarkup = src.includes(` ${cls}"`) || src.includes(`"${cls} `) || src.includes(`"${cls}"`) || src.includes(`cls: '${cls}`);
+        assert.ok(inMarkup, `entityPanel markup is missing .${cls}`);
+    }
+    for (const id of ['ifimgen_profile_system', 'ifimgen_profile_reset']) assert.ok(src.includes(`'${id}'`) && (src.includes(`id="${id}"`) || src.includes(`id: '${id}'`)), `${id} must be both in markup and bound`);
+});
+
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }
 console.log(`PASS (${passed} cases)`);
 
