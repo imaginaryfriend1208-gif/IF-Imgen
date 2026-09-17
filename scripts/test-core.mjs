@@ -82,6 +82,18 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     assert.ok(user.indexOf('SCENE DOCUMENT') < user.indexOf('LATEST REPLY'));
     assert.ok(user.includes('one prompt for EACH of the 2 paragraph(s)') && !user.includes('Choose 2'), 'fixed keeps every image slot');
     assert.ok(system.includes('colour'), 'tag dialect asks for garment colours + state');
+    // The document contract is appended to ANY preset (user-made / overridden too) and only when a document exists.
+    const mine = createPreset({ name: 'mine', system: 'custom {{count}} {{dialect_rule}}' });
+    const withDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', sceneDoc: doc });
+    assert.ok(withDoc.system.startsWith('custom 1') && withDoc.system.includes('SCENE DOCUMENT RULES') && withDoc.system.includes('WEARING lines with colours and state'));
+    assert.ok(withDoc.system.includes('90-150 words') && !withDoc.system.includes('{{'), 'doc length rule follows the dialect, no leftover placeholder');
+    assert.ok(withDoc.system.includes('Do NOT replace it with a $keyword.outfit token'), 'clothing written in words, not as a facet token');
+    assert.ok(withDoc.user.includes('translate the SCENE DOCUMENT'));
+    const noDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
+    assert.ok(!noDoc.system.includes('SCENE DOCUMENT RULES') && !noDoc.system.includes('{{'));
+    assert.equal(defaultSettings().connection.llm.maxTokens, 2000);
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 1200 } } } }).connection.llm.maxTokens, 2000, 'old default raised');
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 900, 'user value kept');
 });
 
 const s = defaultSettings();

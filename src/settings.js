@@ -38,7 +38,7 @@ export function defaultSettings() {
                 mode: 'st_profile', // 'st_profile' | 'custom'
                 profileId: '',
                 custom: { baseUrl: '', apiKey: '', model: '' },
-                maxTokens: 1200,
+                maxTokens: 2000,    // shared by the 3 steps; the scene document (several people + layout) needs the room
                 temperature: 0.7,
             },
         },
@@ -118,6 +118,8 @@ export function migrate(s) {
         delete s.generate.settingSystem;
         if (typeof s.generate.refineSystem === 'string' && s.generate.refineSystem.includes('SCENE SETTING')) s.generate.refineSystem = DEFAULT_REFINE_SYSTEM;
     }
+    // The scene document is long; the old 1200-token default truncated it. Only the untouched old default is raised.
+    if (s.connection?.llm && s.connection.llm.maxTokens === 1200) s.connection.llm.maxTokens = 2000;
     s.version = SETTINGS_VERSION;
     return s;
 }

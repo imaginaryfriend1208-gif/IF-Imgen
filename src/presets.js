@@ -5,8 +5,6 @@ const OUTPUT_RULES = `
 
 WHAT YOU WRITE: an image prompt is a description of the SCENE in that paragraph -- who is present, what each person is doing, pose, expression, clothing state, where they are, lighting, camera angle/shot type. It is NOT a character sheet.
 
-SCENE DOCUMENT: when a SCENE DOCUMENT is given it is the authoritative description of this reply (location, layout, who is present, what each person wears with colours and state, expressions, actions per paragraph, poses). TRANSLATE it into the prompts: every prompt carries the location and lighting from the document, and for each present person the clothing exactly as the document states it (colours, state), the expression and the action of that paragraph, and the pose / position relative to the layout. Never contradict the document; the paragraph text only picks the moment and the camera.
-
 CAST: the ROSTER lists known people as $keyword with a short description so you can recognise them in the text. Their looks are attached automatically later, so NEVER re-describe their fixed appearance (hair, eyes, body, face, height). Mention each person present ONLY as their $keyword once, then describe what they are doing. If a paragraph has two people, mention both keywords and describe both. If a paragraph has no roster person, describe the scene without keywords.
 
 DETAILS: a roster entry may list detail tokens such as $yenka.back, $yenka.outfit, $yenka.nsfw, $yenka.body. Each holds a stored description you cannot see. When that part of the person is visible or matters for the shot, put the TOKEN in the prompt exactly as listed (e.g. "...walking away in the rain, wet $yenka.outfit clinging to her skin, showing $yenka.back"). Never guess or write the content of a detail yourself; never reference a token that is not listed.
@@ -23,6 +21,27 @@ const DIALECT_RULES = {
     tags: 'Write comma-separated danbooru-style tags (lowercase, spaces not underscores), 20-45 tags, most important first: count tags (1girl, 2boys), $keywords, actions, poses, expressions, every garment with its colour and state, props that are in the shot, setting, lighting, camera. No sentences.',
     natural: 'Write ONE vivid natural-language paragraph of 60-110 words: subject(s) and action first (clothing with colours and state, expression, pose), then setting and the props in the shot, lighting, camera. No tag lists, no headings.',
 };
+
+/**
+ * Step 2 contract, appended to EVERY preset system (built-in, overridden or user-made) when a scene document is
+ * given: the document must actually show up in each prompt - place, layout, clothing with colours + state,
+ * expression, action, pose / position of every person. Without it models paraphrase the paragraph and drop the rest.
+ */
+const DOC_LENGTH = {
+    tags: 'With a document the prompt is longer than usual: 30-60 tags, because place, props, clothing, expression and pose of every person are all spelled out.',
+    natural: 'With a document the paragraph is longer than usual: 90-150 words, because place, props, clothing, expression and pose of every person are all spelled out.',
+};
+export const SCENE_DOC_RULES = `
+
+SCENE DOCUMENT RULES (a SCENE DOCUMENT is given - these rules override anything above that conflicts):
+- The document is the source of truth for this reply. The paragraph only picks the MOMENT and the CAMERA; where it happens, who is present, what they wear, how they feel and where they are positioned all come from the document. TRANSLATE the document into the prompt - never summarise the paragraph alone.
+- EVERY prompt must contain, explicitly:
+  (a) WHERE: indoors/outdoors and the place type from LOCATION, the furniture and props from LAYOUT that would be in the frame and where they stand (bed against the wall, lit lamp on the nightstand, rain on the window...), time of day and the lighting.
+  (b) for EACH person present in that shot: their $keyword, then their clothing written out in words from that person's WEARING lines with colours and state (never just "clothes" or "dressed" - write e.g. "unbuttoned white linen shirt, black cotton shorts, barefoot"), their EXPRESSION and gaze, the action of that paragraph from DOING, and their POSE / POSITION relative to the furniture and to the other people (sitting on the left edge of the bed, kneeling at his feet, facing away from the viewer).
+- Clothing always comes from the document in words. Do NOT replace it with a $keyword.outfit token. Other detail tokens ($keyword.back, .nsfw, .body...) are still written as tokens when that part is visible.
+- Never write anything the document contradicts, and never drop the place, the lighting or the clothing because the paragraph does not repeat them.
+- {{doc_length}}
+EXAMPLE with a document (tags): [{"p": 3, "prompt": "1girl, 1boy, $mara sitting on the left edge of a bed with her back to the viewer, oversized white shirt unbuttoned and pushed off her right shoulder, black cotton shorts, barefoot, worried expression looking down at his wound, leaning forward sewing a cut on $tomas's side, $tomas lying on his back on the rumpled bed, grey tank top pulled up to his chest, dark jeans, eyes closed, gritted teeth, dim bedroom, nightstand with a lit brass lamp on the right, window with closed curtains behind the bed, clothes on the wooden floor by the door, warm low light, medium shot from the foot of the bed"}]`;
 
 export const BUILTIN_PRESETS = [
     {
@@ -107,14 +126,20 @@ export function findPreset(settings, id) {
  *   fixed    - the listed paragraphs are exactly the ones to illustrate (regenerate: keep every image slot)
  */
 export function renderPlannerPrompt(preset, a) {
-    const system = preset.system
-        .replaceAll('{{count}}', String(a.count))
-        .replaceAll('{{dialect_rule}}', DIALECT_RULES[a.dialect] ?? DIALECT_RULES.tags);
-    const paraBlock = a.paragraphs.map(p => `[${p.index}] ${p.text}`).join('\n\n');
     const doc = String(a.sceneDoc ?? '').trim();
+    const dialect = DIALECT_RULES[a.dialect] ? a.dialect : 'tags';
+    // The document contract is appended to the preset text so overridden / user presets get it too.
+    const system = (preset.system + (doc ? SCENE_DOC_RULES : ''))
+        .replaceAll('{{count}}', String(a.count))
+        .replaceAll('{{dialect_rule}}', DIALECT_RULES[dialect])
+        .replaceAll('{{doc_length}}', DOC_LENGTH[dialect]);
+    const paraBlock = a.paragraphs.map(p => `[${p.index}] ${p.text}`).join('\n\n');
+    const what = doc
+        ? 'translate the SCENE DOCUMENT into the prompt of each (place + props from LAYOUT, lighting, and for every person present: clothing in words with colours and state, expression, the action of that paragraph, pose / position)'
+        : 'describe the SCENE of each (actions, poses, setting, lighting, camera)';
     const ask = a.fixed
-        ? `Write one prompt for EACH of the ${a.count} paragraph(s) listed (use every listed "p" exactly once), describe the SCENE of each (actions, poses, setting, lighting, camera), and reply with the JSON array only.`
-        : `Choose ${a.count} paragraph(s), describe the SCENE of each (actions, poses, setting, lighting, camera), and reply with the JSON array only.`;
+        ? `Write one prompt for EACH of the ${a.count} paragraph(s) listed (use every listed "p" exactly once), ${what}, and reply with the JSON array only.`
+        : `Choose ${a.count} paragraph(s), ${what}, and reply with the JSON array only.`;
     const user = [
         a.roster ? `ROSTER (keyword -> who they are; looks are added automatically, do not repeat them):\n${a.roster}` : 'ROSTER: (none)',
         doc ? `SCENE DOCUMENT (authoritative for this reply - translate it into the prompts):\n${doc}` : '',

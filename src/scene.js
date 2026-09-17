@@ -159,8 +159,8 @@ OUTPUT FORMAT (strict): reply with ONLY a JSON array of exactly {{count}} object
 [{"i": 1, "prompt": "<final prompt for shot 1>"}, {"i": 2, "prompt": "<final prompt for shot 2>"}]`;
 
 export const REFINE_DIALECT_RULES = {
-    tags: 'Each prompt is comma-separated danbooru-style tags (lowercase, spaces not underscores), 20-45 tags, most important first: count tags, then the people with their look/details, then actions, poses, expressions, clothing state, setting, lighting, camera.',
-    natural: 'Each prompt is one vivid natural-language paragraph of roughly 70-130 words (do not count words, just stay compact): people first (look + clothing from the setting + details + action), then setting, lighting, camera.',
+    tags: 'Each prompt is comma-separated danbooru-style tags (lowercase, spaces not underscores), 30-60 tags, most important first: count tags, then the people with their look/details, then actions, poses, expressions, every garment with colour and state, position relative to the furniture, place and the props in frame, lighting, camera. Keep every place / clothing / pose fact of the draft; add missing tags, never remove facts.',
+    natural: 'Each prompt is one vivid natural-language paragraph of roughly 90-150 words (do not count words, just stay complete): people first (look + clothing with colours and state from the document + details + expression + action + position), then the place with its props, lighting, camera. Keep every place / clothing / pose fact of the draft; add what is missing, never remove facts.',
 };
 
 /**
