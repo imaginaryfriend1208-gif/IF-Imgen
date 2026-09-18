@@ -1,6 +1,6 @@
 // IF Imgen - drawer UI: Settings / Characters / Personas / Styles / Gallery / How to use / Generate.
 import { escapeHtml, downloadJson, downloadUrl, readFileAsText } from './util.js';
-import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS, bindReason, activeProfileFor } from './entities.js';
+import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS, bindReason, activeProfileFor, normalizeKeyword } from './entities.js';
 import { allPresets, createPreset, overwritePreset, resetPreset, BUILTIN_PRESETS, effectiveDialect } from './presets.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
 import { workflowInfo, autoMapWorkflow } from './comfy.js';
@@ -685,10 +685,13 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             q('.ent-tokens-save').addEventListener('click', async () => {
                 const saved = list().find(x => x.id === currentId); if (!saved) return setStatus(t('st_save_first'), 'error');
                 const ctx = getContext();
-                let id = ctx.chat.length - 1; while (id >= 0 && !pipeline.sceneDoc?.(id)) id--;
-                const all = id >= 0 ? (pipeline.sceneDocTokens?.(id) ?? []) : [];
-                const mine = all.filter(tk => tk.key === saved.keyword || (saved.aliases ?? []).includes(tk.key));
-                if (!mine.length) return setStatus(t('st_no_tokens', { kw: saved.keyword }), 'error');
+                const all = pipeline.sceneDocTokensAll?.() ?? [];
+                const keys = new Set([saved.keyword, ...(saved.aliases ?? []), normalizeKeyword(saved.name)].filter(Boolean));
+                const mine = all.filter(tk => keys.has(tk.key));
+                if (!mine.length) {
+                    const found = [...new Set(all.map(tk => tk.key))];
+                    return setStatus(found.length ? t('st_no_tokens_for', { kw: saved.keyword, keys: found.join(', ') }) : t('st_no_tokens_any'), 'error');
+                }
                 const have = new Set([...(saved.facets ?? []), ...(saved.world ?? [])].map(f => f.key));
                 const guessWorld = tk => /^(npc|place|room|apartment|house|home|car|bike|pet|dog|cat|shop|bar|cafe|office|street|alley|city|town|park|beach|school|hotel)_?|_(place|room|alley|street|shop|bar|cafe|office|city|town)$/i.test(tk.facet);
                 const rows = mine.map((tk, i) => `<div class="ifimgen-row" style="align-items:flex-start"><label class="checkbox_label" style="min-width:0"><input type="checkbox" data-i="${i}" ${have.has(tk.facet) ? '' : 'checked'}> <b>$${escapeHtml(saved.keyword)}.${escapeHtml(tk.facet)}</b>${have.has(tk.facet) ? ` <span class="ifimgen-chip">${t('st_token_exists')}</span>` : ''}</label><select class="text_pole" data-dest="${i}" style="max-width:9em"><option value="facets" ${guessWorld(tk) ? '' : 'selected'}>${t('opt_dest_details')}</option><option value="world" ${guessWorld(tk) ? 'selected' : ''}>${t('opt_dest_world')}</option></select></div><div class="ifimgen-note" style="margin:-4px 0 8px 24px">${escapeHtml(tk.text)}</div>`).join('');
@@ -753,7 +756,12 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             ev.target.value = '';
         });
         if (isStyle) q('.ent-default').addEventListener('click', () => { if (!currentId) return setStatus(t('st_save_style_first'), 'error'); settings.defaultStyleId = currentId; save(); refreshList(); setStatus(t('st_style_default_set'), 'ok'); });
-        const setStatus = (text, cls) => { const n = q('.ent-status'); n.textContent = text; n.className = `ifimgen-status ${cls}`; };
+        const setStatus = (text, cls) => {
+            const n = q('.ent-status');
+            if (n) { n.textContent = text; n.className = `ifimgen-status ${cls}`; }
+            else if (globalThis.toastr) (cls === 'error' ? toastr.error : toastr.info)(text, 'IF Imgen');
+            else console.warn('[IF Imgen]', text);
+        };
         load(list().find(x => x.id === currentId)); refreshList();
         return {
             reload() {

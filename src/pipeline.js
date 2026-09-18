@@ -820,6 +820,17 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         sceneDoc: messageId => sceneDocOf(getContext().chat[messageId]),
         /** Ad-hoc tokens ($kw.key: text) defined in the stored scene document of a message (for "save tokens to entry"). */
         sceneDocTokens: messageId => parseDocTokens(sceneDocOf(getContext().chat[messageId])),
+        /** Ad-hoc tokens of EVERY scene document in the chat, newest definition of each $kw.key wins (+ the message it came from).
+         *  The latest document often has an empty TOKENS section (nothing new that reply) - tokens defined earlier must stay saveable. */
+        sceneDocTokensAll() {
+            const chat = getContext().chat ?? [];
+            const seen = new Map();
+            for (let i = chat.length - 1; i >= 0; i--) {
+                const doc = sceneDocOf(chat[i]); if (!doc) continue;
+                for (const tk of parseDocTokens(doc)) { const k = `${tk.key}.${tk.facet}`; if (!seen.has(k)) seen.set(k, { ...tk, at: i }); }
+            }
+            return [...seen.values()];
+        },
         cancel(messageId) {
             if (messageId === undefined) { for (const c of inflight.values()) c.abort(); return; }
             inflight.get(messageId)?.abort();
