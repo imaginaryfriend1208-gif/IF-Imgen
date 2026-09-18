@@ -334,8 +334,10 @@ export function extractJsonArray(text) {
     const s = String(text ?? '');
     const start = s.indexOf('[');
     const end = s.lastIndexOf(']');
-    if (start < 0 || end <= start) return null;
     const tryParse = str => { try { const v = JSON.parse(str); return Array.isArray(v) ? v : null; } catch { return null; } };
+    // Reply cut off by max_tokens (an opening [ but no closing ]): parse the complete objects and salvage the cut one.
+    if (start >= 0 && end <= start) return truncatedObjects(s.slice(start));
+    if (start < 0) return null;
     const slice = s.slice(start, end + 1);
     return tryParse(slice) ?? tryParse(repairQuotes(slice)) ?? looseObjects(slice);
 }
