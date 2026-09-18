@@ -55,7 +55,9 @@ export function mountLedger({ root, settings, save, pipeline, status, onEntities
         const keep = target.value;
         target.innerHTML = ents.map(({ e, kind }) => `<option value="${kind}:${escapeHtml(e.id)}">${escapeHtml(e.name)} ($${escapeHtml(e.keyword)})</option>`).join('');
         if (keep && [...target.options].some(o => o.value === keep)) target.value = keep;
-        if (!toks.length) { list.innerHTML = `<div class="ifimgen-note">${t('st_ledger_empty')}</div>`; return; }
+        const hidden = pipeline.ledgerHidden?.() ?? 0;
+        const unhide = hidden ? `<div class="ifimgen-note"><a href="#" class="ifimgen-ledger-unhide">${t('st_ledger_hidden', { n: hidden })}</a></div>` : '';
+        if (!toks.length) { list.innerHTML = `<div class="ifimgen-note">${t('st_ledger_empty')}</div>${unhide}`; return; }
         list.innerHTML = toks.map(tk => {
             const id = `${tk.key}.${tk.facet}`;
             const chips = `${tk.key === 'world' ? `<span class="ifimgen-chip">${t('chip_world')}</span>` : ''}${tk.saved ? `<span class="ifimgen-chip active">${t('chip_saved')}</span>` : ''}`;
@@ -64,9 +66,10 @@ export function mountLedger({ root, settings, save, pipeline, status, onEntities
                 <button class="menu_button ifimgen-btn ifimgen-token-remove" data-id="${escapeHtml(id)}" title="${escapeHtml(t('ttl_ledger_remove'))}">${ICONS.trash}</button>
                 <div class="ifimgen-token-text">${escapeHtml(tk.text)}</div>
             </div>`;
-        }).join('');
+        }).join('') + unhide;
     }
     list.addEventListener('click', ev => {
+        if (ev.target.closest('.ifimgen-ledger-unhide')) { ev.preventDefault(); pipeline.ledgerUnhideAll?.(); render(); return; }
         const b = ev.target.closest('.ifimgen-token-remove'); if (!b) return;
         pipeline.ledgerRemove?.(b.dataset.id); render();
     });
@@ -81,7 +84,7 @@ export function mountLedger({ root, settings, save, pipeline, status, onEntities
         const add = tokensToFacets(picked);
         const next = createEntity(kind, { ...saved, facets: mergeFacets(saved.facets, add.facets), world: mergeFacets(saved.world, add.world) });
         upsertEntity(ents, next); save();
-        for (const tk of picked) pipeline.ledgerMarkSaved?.(`${tk.key}.${tk.facet}`);
+        for (const tk of picked) pipeline.ledgerMarkSaved?.(`${tk.key}.${tk.facet}`, tk.text);
         onEntitiesChanged?.(); render();
         status(t('st_ledger_saved', { n: picked.length, name: next.name }), 'ok');
     });

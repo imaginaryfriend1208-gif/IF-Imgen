@@ -359,3 +359,11 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 .ifimgen-ledger .ifimgen-token-remove { background: none; border: 0; opacity: .6; cursor: pointer; padding: 2px 4px; }
 .ifimgen-ledger .ifimgen-token-remove:hover { opacity: 1; }
 .ifimgen-token .ifimgen-chip.world { opacity: .9; }
+
+/* floater: chat tokens list */
+.ifimgen-fl-tokens { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.ifimgen-fl-token { font-size: .86em; line-height: 1.35; padding: 6px 8px; border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.12)); border-radius: 8px; }
+.ifimgen-fl-token b { word-break: break-all; }
+.ifimgen-fl-token .ifimgen-chip { margin-left: 4px; }
+.ifimgen-fl-token-at { float: right; opacity: .55; font-size: .9em; }
+.ifimgen-fl-token-text { opacity: .8; margin-top: 2px; }

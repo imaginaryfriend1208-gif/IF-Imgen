@@ -138,8 +138,21 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
     // ------------------------------------------------------------------ popup
     const item = (act, icon, label, sub = '', cls = '') =>
         `<button type="button" class="ifimgen-fl-act ${cls}" data-act="${act}">${ICONS[icon] ?? ''}<span><b>${label}</b>${sub ? `<small>${sub}</small>` : ''}</span></button>`;
+    // Chat tokens (read-only list of the ad-hoc tokens of THIS chat - saving / hiding lives on the Generate tab).
+    const tokenCount = () => { try { return (pipeline.ledger?.() ?? []).length; } catch { return 0; } };
+    function renderTokens() {
+        root.classList.add('editing');
+        const toks = pipeline.ledger?.() ?? [];
+        pop.innerHTML = `
+            <div class="ifimgen-fl-edit-head"><span>${ICONS.sparkles} ${t('fl_tokens')} <span class="ifimgen-chip">${toks.length}</span></span>
+                <button type="button" class="ifimgen-fl-mini" data-act="tokens-back" title="${t('fl_tokens_back')}">${ICONS.x}</button></div>
+            <div class="ifimgen-fl-tokens">${toks.length ? toks.map(tk => `<div class="ifimgen-fl-token${tk.key === 'world' ? ' world' : ''}"><b>$${escapeHtml(tk.key)}.${escapeHtml(tk.facet)}</b><span class="ifimgen-token-at">#${tk.at}${tk.saved ? ' · ' + t('chip_saved') : ''}</span><div>${escapeHtml(tk.text)}</div></div>`).join('') : `<div class="ifimgen-fl-hint">${t('fl_tokens_empty')}</div>`}</div>
+            <div class="ifimgen-fl-row ifimgen-fl-row-mini">${item('settings', 'settings', t('fl_settings'))}</div>`;
+        fitPop();
+    }
     function renderPop() {
         if (!pop) return;
+        if (editing === 'tokens') return renderTokens();
         if (editing) return renderEditor();
         root.classList.remove('editing');
         const busy = lastState.running > 0;
@@ -153,6 +166,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
             ${busy ? item('cancel', 'x', t('fl_cancel', { n: lastState.running }), '', 'danger') : ''}
             ${styleRow()}
             <div class="ifimgen-fl-row ifimgen-fl-row-mini">
+                ${item('tokens', 'sparkles', `${t('fl_tokens')}${tokenCount() ? ` (${tokenCount()})` : ''}`)}
                 ${item('gallery', 'images', t('fl_gallery'))}
                 ${item('collapse', 'image', g.collapseImages ? t('fl_unfold') : t('fl_fold'))}
                 ${item('settings', 'settings', t('fl_settings'))}
@@ -204,6 +218,8 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         else if (act === 'settings') { closePop(); openSettings?.(); }
         else if (act === 'collapse') { onCollapseToggle?.(); renderPop(); }
         else if (act === 'style-edit') { const id = pop.querySelector('[data-style-select]')?.value || settings.defaultStyleId; if (id && styles().some(s => s.id === id)) { editing = { id }; renderEditor(); } }
+        else if (act === 'tokens') { editing = 'tokens'; renderTokens(); }
+        else if (act === 'tokens-back') { editing = null; renderPop(); }
         else if (act === 'style-new') { editing = { id: null }; renderEditor(); }
         else if (act === 'style-back') { editing = null; renderPop(); }
         else if (act === 'style-save') styleSave();

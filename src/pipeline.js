@@ -9,7 +9,7 @@
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, isTruncatedReply, findPreset, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
-import { mergeLedger, ledgerTokens, ledgerBlock, removeLedgerToken, markLedgerSaved, bootstrapLedger } from './ledger.js';
+import { ledgerTokens, ledgerBlock, hideLedgerToken, unhideAll, hiddenCount, markLedgerSaved } from './ledger.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined, parseDocTokens } from './scene.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft } from './profile.js';
@@ -129,17 +129,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         }
         return out;
     }
-    // ---- chat token ledger (chat_metadata.ifimgen_tokens): every ad-hoc token the planner defined in this chat.
+    // ---- chat token ledger: the ad-hoc tokens of the scene documents stored on THIS chat's messages (derived, so a
+    // branch carries exactly the tokens up to its branch point); chat_metadata only holds the saved / hidden flags.
     const saveMeta = ctx => { try { (ctx.saveMetadataDebounced ?? ctx.saveMetadata)?.(); } catch { /* not available (tests) */ } };
     /** Tokens of this chat handed to the LLM steps: the newest N (settings.generate.ledgerLimit, 0 = all); tokens defined
      *  by documents AFTER `beforeId` are left out so a regenerate of an old message does not see the future. */
     function chatLedger(ctx, beforeId = Infinity) {
-        bootstrapLedger(ctx, sceneDocOf);
-        const lim = Number(settings.generate.ledgerLimit ?? 40);
-        return ledgerTokens(ctx, 0).filter(tk => tk.at <= beforeId).slice(0, lim > 0 ? lim : undefined);
-    }
-    function recordDocTokens(ctx, messageId, doc) {
-        if (mergeLedger(ctx, parseDocTokens(doc), messageId) > 0) { saveMeta(ctx); onChange?.(messageId); }
+        return ledgerTokens(ctx, sceneDocOf, { upTo: beforeId, limit: Number(settings.generate.ledgerLimit ?? 40) });
     }
 
     /** Refusal / empty-output check shared by the LLM steps. */
@@ -196,7 +192,6 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         status('writing scene document…');
         const doc = await writeSceneDoc(ctx, messageId, { paragraphs: paras, context: contextText(ctx, messageId, settings.generate.contextMessages) }, signal);
         setSceneDoc(msg, doc);
-        recordDocTokens(ctx, messageId, doc);
         log(`#${messageId} scene document`, doc);
         return doc;
     }
@@ -840,9 +835,11 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         /** Ad-hoc tokens of EVERY scene document in the chat, newest definition of each $kw.key wins (+ the message it came from).
          *  The latest document often has an empty TOKENS section (nothing new that reply) - tokens defined earlier must stay saveable. */
         /** Chat token ledger for the UI: list (newest first), remove one, mark one as saved into an entry. */
-        ledger: () => { const ctx = getContext(); bootstrapLedger(ctx, sceneDocOf); return ledgerTokens(ctx, 0); },
-        ledgerRemove(id) { const ctx = getContext(); if (removeLedgerToken(ctx, id)) saveMeta(ctx); },
-        ledgerMarkSaved(id) { const ctx = getContext(); if (markLedgerSaved(ctx, id)) saveMeta(ctx); },
+        ledger: () => ledgerTokens(getContext(), sceneDocOf),
+        ledgerHidden: () => hiddenCount(getContext()),
+        ledgerRemove(id) { const ctx = getContext(); hideLedgerToken(ctx, id); saveMeta(ctx); },
+        ledgerUnhideAll() { const ctx = getContext(); unhideAll(ctx); saveMeta(ctx); },
+        ledgerMarkSaved(id, text) { const ctx = getContext(); markLedgerSaved(ctx, id, text); saveMeta(ctx); },
         sceneDocTokensAll() {
             const chat = getContext().chat ?? [];
             const seen = new Map();
