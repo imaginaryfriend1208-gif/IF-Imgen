@@ -68,6 +68,9 @@ test('parsePlan: tolerant JSON, drops invalid/duplicate paragraphs, sorted', () 
     const plan = parsePlan('Sure!\n[{"p":2,"prompt":"b"},{"p":9,"prompt":"x"},{"p":1,"prompt":"a"},{"p":2,"prompt":"dup"},{"p":1,"prompt":""}]', [1, 2, 3]);
     assert.deepEqual(plan, [{ p: 1, prompt: 'a' }, { p: 2, prompt: 'b' }]);
     assert.deepEqual(parsePlan('garbage', [1]), []);
+    // reply cut off by max tokens: complete objects kept, the cut one salvaged (prompt only), too-short cut dropped
+    assert.deepEqual(parsePlan('[{"p":1,"prompt":"a full prompt","final":"f"},{"p":2,"prompt":"a second prompt long enough to keep","final":"cut mid wa', [1, 2]), [{ p: 1, prompt: 'a full prompt', final: 'f' }, { p: 2, prompt: 'a second prompt long enough to keep' }]);
+    assert.deepEqual(parsePlan('[{"p":1,"prompt":"short', [1]), []);
 });
 
 test('renderPlannerPrompt fills placeholders', () => {
@@ -106,10 +109,10 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     assert.ok(withDoc.user.includes('translate the SCENE DOCUMENT'));
     const noDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
     assert.ok(!noDoc.system.includes('SCENE DOCUMENT RULES') && !noDoc.system.includes('{{'));
-    assert.equal(defaultSettings().connection.llm.maxTokens, 8000);
-    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 1200 } } } }).connection.llm.maxTokens, 8000, 'old default raised');
-    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 8000, 'v4 lifts small caps');
-    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 12000 } } } }).connection.llm.maxTokens, 12000, 'larger user value kept');
+    assert.equal(defaultSettings().connection.llm.maxTokens, 12000);
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 1200 } } } }).connection.llm.maxTokens, 12000, 'old default raised');
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 900 } } } }).connection.llm.maxTokens, 12000, 'v4 / v5 lift small caps');
+    assert.equal(ensureSettings({ IF_Imgen: { version: 3, connection: { llm: { maxTokens: 16000 } } } }).connection.llm.maxTokens, 16000, 'larger user value kept');
 });
 
 const s = defaultSettings();

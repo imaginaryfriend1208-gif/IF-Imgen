@@ -383,6 +383,49 @@ function repairQuotes(str) {
     return out;
 }
 
+
+/** True when the reply opened a JSON array and never closed it (cut off by max_tokens / the provider). */
+export function isTruncatedReply(text) {
+    const s = String(text ?? '');
+    const start = s.indexOf('[');
+    return start >= 0 && s.lastIndexOf(']') <= start;
+}
+
+/**
+ * Reply cut off before the closing bracket: every object that closed is parsed as usual; the object the cut fell
+ * into is kept when its "p" and a "prompt" of at least 20 characters were already written (a cut "final" is dropped -
+ * the compiler expands the tokens itself). Returns null when nothing complete was found.
+ */
+function truncatedObjects(s) {
+    const out = [];
+    let i = s.indexOf('{');
+    while (i >= 0) {
+        let depth = 0, inStr = false, esc = false, j = i, closed = -1;
+        for (; j < s.length; j++) {
+            const ch = s[j];
+            if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+            if (ch === '"') inStr = true;
+            else if (ch === '{') depth++;
+            else if (ch === '}') { depth--; if (depth === 0) { closed = j; break; } }
+        }
+        const chunk = s.slice(i, closed >= 0 ? closed + 1 : undefined);
+        let obj = null;
+        try { obj = JSON.parse(chunk); } catch { try { obj = JSON.parse(repairQuotes(chunk)); } catch { obj = null; } }
+        if (!obj) {
+            const p = chunk.match(/"p"\s*:\s*(\d+)/);
+            const pr = chunk.match(/"prompt"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)/);
+            const ar = chunk.match(/"ar"\s*:\s*"(portrait|landscape|square)"/);
+            const finalClosed = /"final"\s*:\s*"(?:[^"\\]|\\.)*"\s*[,}]/.test(chunk);
+            const fin = finalClosed ? chunk.match(/"final"\s*:\s*"((?:[^"\\]|\\.)*)"/) : null;
+            if (p && pr && pr[1].trim().length >= 20) obj = { p: Number(p[1]), prompt: pr[1].trim(), ...(ar ? { ar: ar[1] } : {}), ...(fin ? { final: fin[1] } : {}) };
+        }
+        if (obj && typeof obj === 'object') out.push(obj);
+        if (closed < 0) break;
+        i = s.indexOf('{', closed + 1);
+    }
+    return out.length ? out : null;
+}
+
 /**
  * Parse the step-2 reply into [{ p, prompt, final?, ar? }] restricted to valid paragraph numbers.
  * `final` is the smooth version without tokens; it is dropped when the model left a $token in it (the compiler would

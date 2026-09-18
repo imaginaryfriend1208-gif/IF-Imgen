@@ -4,7 +4,7 @@ import { DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 import { DEFAULT_PROFILE_SYSTEM } from './profile.js';
 
 export const MODULE = 'IF_Imgen';
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 
 /** Per-model generation parameters (one profile per model, per backend). */
 export const PARAM_KEYS = ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height'];
@@ -39,7 +39,7 @@ export function defaultSettings() {
                 mode: 'st_profile', // 'st_profile' | 'custom'
                 profileId: '',
                 custom: { baseUrl: '', apiKey: '', model: '' },
-                maxTokens: 8000,    // shared by the 3 steps; scene document + two prompt versions per image need the room (rarely used up, but a cap here truncates JSON)
+                maxTokens: 12000,    // shared by the 3 steps; scene document + two prompt versions per image need the room (rarely used up, but a cap here truncates JSON)
                 temperature: 0.7,
             },
         },
@@ -128,6 +128,8 @@ export function migrate(s) {
     // v4: step 2 answers with two versions per prompt and the scene document may carry a TOKENS section; small caps
     // cut the JSON mid-string. Any cap below 6000 is lifted to the new default (a larger user value is kept).
     if (from < 4 && s.connection?.llm && Number(s.connection.llm.maxTokens) < 6000) s.connection.llm.maxTokens = 8000;
+    // v5 (0.12.13): the "final" carries every base look in full -> 4 shots x 2 versions no longer fit in 8000.
+    if (from < 5 && s.connection?.llm && Number(s.connection.llm.maxTokens) < 12000) s.connection.llm.maxTokens = 12000;
     s.version = SETTINGS_VERSION;
     return s;
 }

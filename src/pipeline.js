@@ -7,7 +7,7 @@
 //   render each prompt -> insert in place. Each image is recorded in message.extra.ifimgen so it can be regenerated later.
 // Regenerate (one image / all images) re-runs step 2 (+3) from the STORED document; "regen scene" / Generate re-run step 1.
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
-import { renderPlannerPrompt, parsePlan, findPreset, effectiveDialect } from './presets.js';
+import { renderPlannerPrompt, parsePlan, isTruncatedReply, findPreset, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined, parseDocTokens } from './scene.js';
@@ -132,6 +132,10 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     function llmFailure(reply, what) {
         const head = String(reply ?? '').replace(/\s+/g, ' ').trim().slice(0, 220);
         const refused = /(can(?:'|no)t|unable to|not able to|won't|will not|decline|refus|cannot assist|outside what I can)/i.test(reply) && !String(reply).includes('[');
+        console.warn('[IF Imgen] full LLM reply that could not be used:', reply);
+        if (isTruncatedReply(reply)) {
+            return new Error(`The ${what} LLM reply was cut off before the closing ] (max tokens reached or the provider stopped early) and nothing complete could be salvaged. Raise Max tokens in Connection, lower Images per reply, or use a shorter preset. Reply started with: ${head}`);
+        }
         return new Error(refused
             ? `The ${what} LLM refused this reply (${head}…). Use a less strict model / connection profile for IF Imgen, or a SFW preset.`
             : `The ${what} LLM returned nothing usable. Reply started with: ${head || '(empty)'}`);
@@ -212,6 +216,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const reply = await llm.chat({ system, user, signal });
         const plan = parsePlan(reply, paragraphs.map(p => p.index)).slice(0, count);
         if (!plan.length) throw llmFailure(reply, 'prompt translator');
+        if (isTruncatedReply(reply)) log(`prompt translator: reply cut off by max tokens - ${plan.length}/${count} shot(s) salvaged; raise Max tokens in Connection`);
         return plan;
     }
 
