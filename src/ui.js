@@ -11,6 +11,9 @@ import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } f
 import { PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from './profile.js';
 import { t, setLang, getLang, LANGS, FLAGS } from './i18n.js';
 
+/** Set the state class of a status node (ok / error / warn / '') without touching its marker classes (ent-status, ent-profile-status). */
+function setStatusClass(n, cls) { n.classList.remove('ok', 'error', 'warn'); if (cls) n.classList.add(...String(cls).split(/\s+/).filter(Boolean)); }
+
 // Labels are resolved at render time (t()) so the language switch re-renders everything.
 const ENTITY_TABS = () => [
     { kind: 'characters', tab: 'chars', label: t('tab_chars'), icon: 'users', hint: t('hint_chars') },
@@ -65,7 +68,7 @@ export function mountDrawer(deps) {
 function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, viewer, discordUrl, kofiUrl, onLanguageChange, onCollapseChange, onAlignChange, onFloaterChange, onShowButtonChange }, openTab) {
     root.innerHTML = markup({ discordUrl, kofiUrl });
     const $ = id => root.querySelector(`#${id}`);
-    const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; n.className = `ifimgen-status ${cls}`; };
+    const status = (id, text, cls = '') => { const n = $(id); if (!n) return; n.textContent = text; setStatusClass(n, cls); };
 
     // ---- main tabs
     const showTab = tab => {
@@ -557,14 +560,14 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             gen.title = gen.querySelector('span').textContent;
             for (const c of ['.ent-profile-edit', '.ent-profile-preview']) q(c).disabled = running || !saved;
             // No job for this entry any more -> a status line still saying "generating … rendering…" is stale; clear it.
-            if (!running) { const n = q('.ent-profile-status'); if (n.textContent.includes(t('st_profile_running'))) { n.textContent = ''; n.className = 'ifimgen-status'; } }
+            if (!running) { const n = q('.ent-profile-status'); if (n && n.textContent.includes(t('st_profile_running'))) { n.textContent = ''; setStatusClass(n, ''); } }
             q('.ent-profile-open').disabled = !cur;
             q('.ent-profile-delete').disabled = running || !cur;
             const det = q('.ent-profile-prompt');
             det.style.display = cur?.prompt ? '' : 'none';
             if (cur?.prompt) { det.querySelector('summary').textContent = `${t('pv_profile_final')} · ${cur.shot ?? ''}${cur.sfw === false ? ' · nsfw' : ''}`; q('.ent-profile-prompt-text').textContent = cur.prompt; }
         }
-        const profStatus = (text, cls = '') => { const n = q('.ent-profile-status'); n.textContent = text; n.className = `ifimgen-status ${cls}`; };
+        const profStatus = (text, cls = '') => { const n = q('.ent-profile-status'); if (!n) return; n.textContent = text; setStatusClass(n, cls); };
         const savedEntity = () => (currentId ? list().find(x => x.id === currentId) : null) ?? null;
         // Generate <-> Cancel follows the pipeline's job events, not the promise chain of runProfile(): whenever a job
         // starts or ends (this entry's render included) the box is re-rendered, so the button can never stay stuck on
@@ -694,9 +697,9 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
                 }
                 const have = new Set([...(saved.facets ?? []), ...(saved.world ?? [])].map(f => f.key));
                 const guessWorld = tk => /^(npc|place|room|apartment|house|home|car|bike|pet|dog|cat|shop|bar|cafe|office|street|alley|city|town|park|beach|school|hotel)_?|_(place|room|alley|street|shop|bar|cafe|office|city|town)$/i.test(tk.facet);
-                const rows = mine.map((tk, i) => `<div class="ifimgen-row" style="align-items:flex-start"><label class="checkbox_label" style="min-width:0"><input type="checkbox" data-i="${i}" ${have.has(tk.facet) ? '' : 'checked'}> <b>$${escapeHtml(saved.keyword)}.${escapeHtml(tk.facet)}</b>${have.has(tk.facet) ? ` <span class="ifimgen-chip">${t('st_token_exists')}</span>` : ''}</label><select class="text_pole" data-dest="${i}" style="max-width:9em"><option value="facets" ${guessWorld(tk) ? '' : 'selected'}>${t('opt_dest_details')}</option><option value="world" ${guessWorld(tk) ? 'selected' : ''}>${t('opt_dest_world')}</option></select></div><div class="ifimgen-note" style="margin:-4px 0 8px 24px">${escapeHtml(tk.text)}</div>`).join('');
+                const rows = mine.map((tk, i) => `<div class="ifimgen-token"><label class="checkbox_label ifimgen-token-head"><input type="checkbox" data-i="${i}" ${have.has(tk.facet) ? '' : 'checked'}> <b>$${escapeHtml(saved.keyword)}.${escapeHtml(tk.facet)}</b>${have.has(tk.facet) ? ` <span class="ifimgen-chip">${t('st_token_exists')}</span>` : ''}</label><select class="text_pole ifimgen-token-dest" data-dest="${i}"><option value="facets" ${guessWorld(tk) ? '' : 'selected'}>${t('opt_dest_details')}</option><option value="world" ${guessWorld(tk) ? 'selected' : ''}>${t('opt_dest_world')}</option></select><div class="ifimgen-token-text">${escapeHtml(tk.text)}</div></div>`).join('');
                 const box = document.createElement('div'); box.className = 'ifimgen-tokens-popup'; box.innerHTML = `<div class="ifimgen-note">${t('note_tokens_popup')}</div>${rows}`;
-                const ok = await ctx.callGenericPopup(box, ctx.POPUP_TYPE.CONFIRM, '', { okButton: t('btn_save'), wide: true, large: true });
+                const ok = await ctx.callGenericPopup(box, ctx.POPUP_TYPE.CONFIRM, '', { okButton: t('btn_save'), leftAlign: true, allowVerticalScrolling: true });
                 if (!ok) return;
                 const picked = [...box.querySelectorAll('input[type=checkbox]:checked')].map(c => Number(c.dataset.i));
                 if (!picked.length) return;
@@ -758,7 +761,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         if (isStyle) q('.ent-default').addEventListener('click', () => { if (!currentId) return setStatus(t('st_save_style_first'), 'error'); settings.defaultStyleId = currentId; save(); refreshList(); setStatus(t('st_style_default_set'), 'ok'); });
         const setStatus = (text, cls) => {
             const n = q('.ent-status');
-            if (n) { n.textContent = text; n.className = `ifimgen-status ${cls}`; }
+            if (n) { n.textContent = text; setStatusClass(n, cls); }
             else if (globalThis.toastr) (cls === 'error' ? toastr.error : toastr.info)(text, 'IF Imgen');
             else console.warn('[IF Imgen]', text);
         };
