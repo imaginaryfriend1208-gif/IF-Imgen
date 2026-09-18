@@ -191,7 +191,7 @@ eventSource.on(event_types.GENERATION_ENDED, async () => {
         if (r?.skipped && r.skipped !== 'already has images') LOG('skipped:', r.skipped);
     } catch (e) { toastr.error(e.message, 'IF Imgen'); }
 });
-eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); foldAll(); drawer?.refreshGallery(); floater?.repaint(); }, 300); });
+eventSource.on(event_types.CHAT_CHANGED, () => { pipeline.cancel(); viewer.close(); setTimeout(async () => { try { await pipeline.migrateChat(); } catch (e) { LOG('migrate failed', e); } addAllButtons(); foldAll(); drawer?.refreshGallery(); drawer?.refreshEntities(); /* role marks (official / guest) depend on the open chat */ floater?.repaint(); }, 300); });
 eventSource.on(event_types.MESSAGE_DELETED, () => { drawer?.refreshGallery(); paintAllMessageButtons(); });
 eventSource.on(event_types.MESSAGE_EDITED, id => { drawer?.refreshGallery(); paintAllMessageButtons(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
 eventSource.on(event_types.MESSAGE_SWIPED, id => { drawer?.refreshGallery(); paintAllMessageButtons(); if (settings.generate.collapseImages) setTimeout(() => foldImages(Number(id)), 50); setTimeout(() => floater?.repaint(), 60); });
