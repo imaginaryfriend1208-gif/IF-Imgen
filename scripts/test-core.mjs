@@ -818,6 +818,19 @@ test('ui: bind / world / tokens UI - every new selector is in the markup, world 
     assert.ok(pipeSrc.includes('sceneDocTokens:'), 'pipeline exposes the doc tokens for the save-tokens popup');
 });
 
+test('NSFW preset: priority ladder, focus over wide, explicit anatomy, motion in a still, fluids, clothing state, expression; its own 3-shot example per dialect (nipple close-up / wide position / face), tokens + final contract kept', () => {
+    const p = BUILTIN_PRESETS.find(x => x.id === 'nsfw_explicit');
+    const tg = renderPlannerPrompt(p, { paragraphs: [{ index: 1, text: 'x' }], count: 2, roster: '', dialect: 'tags' }).system;
+    for (const k of ['FOCUS OVER WIDE', 'nipple focus', 'penetration focus', 'MOTION IN A STILL', 'motion lines', 'FLUIDS', 'CLOTHING STATE', 'EXPRESSION UNDER SEX', 'ahegao', 'at most one per reply', 'WHAT TO DRAW']) assert.ok(tg.includes(k), k);
+    assert.ok(tg.includes('EXAMPLES (tags') && !tg.includes('EXAMPLE (roster'), 'NSFW example replaces the default one');
+    assert.ok(tg.includes('"final"') && tg.includes('TWO VERSIONS'), 'same raw prompt + final contract');
+    assert.ok(!/\{\{/.test(tg), 'no leftover placeholder');
+    const ex = tg.slice(tg.indexOf('EXAMPLES (tags'));
+    assert.ok(ex.includes('nipple focus') && ex.includes('doggystyle') && ex.includes('face focus'), 'three shots: contact close-up, wide position, face');
+    const pr = renderPlannerPrompt(p, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', sceneDoc: 'SCENE: x' }).system;
+    assert.ok(pr.includes('EXAMPLES (prose') && pr.includes('SCENE DOCUMENT RULES') && !/\{\{/.test(pr));
+});
+
 test('compareVersions: numeric per segment, leading v ignored, missing segments are 0', () => {
     assert.equal(compareVersions('0.10.0', '0.9.1'), 1);
     assert.equal(compareVersions('v0.9.0', '0.9.0'), 0);
