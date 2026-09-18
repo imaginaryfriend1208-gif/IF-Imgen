@@ -138,6 +138,37 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
     // ------------------------------------------------------------------ popup
     const item = (act, icon, label, sub = '', cls = '') =>
         `<button type="button" class="ifimgen-fl-act ${cls}" data-act="${act}">${ICONS[icon] ?? ''}<span><b>${label}</b>${sub ? `<small>${sub}</small>` : ''}</span></button>`;
+    // Scene document of the latest character reply: view, edit, save (no LLM call) or save + regenerate the images from it.
+    function renderScene() {
+        root.classList.add('editing');
+        const id = lastCharMessage();
+        const doc = id >= 0 ? (pipeline.sceneDoc?.(id) ?? '') : '';
+        pop.innerHTML = `
+            <div class="ifimgen-fl-status ifimgen-fl-edit-head">
+                <button type="button" class="ifimgen-fl-mini" data-act="style-back" title="${t('fl_style_back')}">${ICONS.x}</button>
+                <b>${t('fl_scene')}</b>${id >= 0 ? ` <span class="ifimgen-chip">#${id}</span>` : ''}
+            </div>
+            ${doc ? `<textarea class="text_pole ifimgen-fl-scene" data-scene-text rows="14" spellcheck="false">${escapeHtml(doc)}</textarea>
+            <div class="ifimgen-fl-hint">${t('fl_scene_hint')}</div>
+            <div class="ifimgen-fl-status ifimgen-fl-edit-status" data-edit-status></div>
+            <div class="ifimgen-fl-row ifimgen-fl-row-mini">
+                <button type="button" class="ifimgen-fl-act" data-act="scene-save">${ICONS.save}<span><b>${t('btn_save')}</b></span></button>
+                <button type="button" class="ifimgen-fl-act primary" data-act="scene-save-regen">${ICONS.refresh}<span><b>${t('fl_scene_save_regen')}</b></span></button>
+            </div>` : `<div class="ifimgen-fl-hint">${t('fl_scene_none')}</div>`}`;
+        fitPop();
+    }
+    async function sceneSave(regen) {
+        const id = lastCharMessage();
+        const ta = pop?.querySelector('[data-scene-text]');
+        if (id < 0 || !ta) return;
+        const ok = pipeline.setSceneDoc?.(id, ta.value);
+        if (!ok) { const st = pop.querySelector('[data-edit-status]'); if (st) st.textContent = t('st_no_char_msg'); return; }
+        if (!regen) { const st = pop.querySelector('[data-edit-status]'); if (st) st.textContent = t('fl_scene_saved'); return; }
+        closePop();
+        try { const r = await pipeline.regenerateAll(id, { newScene: false }); if (r?.none) toast('info', t('st_no_images')); }
+        catch (e) { toast('error', e.message); }
+    }
+
     // Chat tokens (read-only list of the ad-hoc tokens of THIS chat - saving / hiding lives on the Generate tab).
     const tokenCount = () => { try { return (pipeline.ledger?.() ?? []).length; } catch { return 0; } };
     function renderTokens() {
@@ -153,6 +184,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
     function renderPop() {
         if (!pop) return;
         if (editing === 'tokens') return renderTokens();
+        if (editing === 'scene') return renderScene();
         if (editing) return renderEditor();
         root.classList.remove('editing');
         const busy = lastState.running > 0;
@@ -166,6 +198,7 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
             ${busy ? item('cancel', 'x', t('fl_cancel', { n: lastState.running }), '', 'danger') : ''}
             ${styleRow()}
             <div class="ifimgen-fl-row ifimgen-fl-row-mini">
+                ${item('scene', 'brain', t('fl_scene'))}
                 ${item('tokens', 'sparkles', `${t('fl_tokens')}${tokenCount() ? ` (${tokenCount()})` : ''}`)}
                 ${item('gallery', 'images', t('fl_gallery'))}
                 ${item('collapse', 'image', g.collapseImages ? t('fl_unfold') : t('fl_fold'))}
@@ -219,6 +252,9 @@ export function mountFloater({ settings, save, pipeline, getContext, openSetting
         else if (act === 'collapse') { onCollapseToggle?.(); renderPop(); }
         else if (act === 'style-edit') { const id = pop.querySelector('[data-style-select]')?.value || settings.defaultStyleId; if (id && styles().some(s => s.id === id)) { editing = { id }; renderEditor(); } }
         else if (act === 'tokens') { editing = 'tokens'; renderTokens(); }
+        else if (act === 'scene') { editing = 'scene'; renderScene(); }
+        else if (act === 'scene-save') sceneSave(false);
+        else if (act === 'scene-save-regen') sceneSave(true);
         else if (act === 'tokens-back') { editing = null; renderPop(); }
         else if (act === 'style-new') { editing = { id: null }; renderEditor(); }
         else if (act === 'style-back') { editing = null; renderPop(); }

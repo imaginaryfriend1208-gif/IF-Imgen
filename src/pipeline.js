@@ -830,6 +830,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         // is available again right away even if the backend never answers.
         cancelProfile: id => { const key = PROFILE_KEY(id); const c = inflight.get(key); if (!c) return; c.abort(); end(key); },
         sceneDoc: messageId => sceneDocOf(getContext().chat[messageId]),
+        /** Replace the stored scene document of a message with the user's edited text (no LLM call). The next
+         *  Regenerate translates the images from it; the next reply's planner reads it as continuity. */
+        setSceneDoc(messageId, text) {
+            const ctx = getContext(); const msg = ctx.chat[messageId]; if (!msg) return false;
+            const t = String(text ?? '').trim(); if (!t) return false;
+            setSceneDoc(msg, t); ctx.saveChat?.(); try { onChange(messageId); } catch { /* ignore */ } return true;
+        },
         /** Ad-hoc tokens ($kw.key: text) defined in the stored scene document of a message (for "save tokens to entry"). */
         sceneDocTokens: messageId => parseDocTokens(sceneDocOf(getContext().chat[messageId])),
         /** Ad-hoc tokens of EVERY scene document in the chat, newest definition of each $kw.key wins (+ the message it came from).
