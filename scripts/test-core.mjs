@@ -799,6 +799,25 @@ test('resolveEntities: no keyword -> official / guest only (never always); keywo
     assert.deepEqual(resolveEntities(s, { text: 'two men talk', ...here }).characters.map(e => e.name).sort(), ['Rosario', 'Seb v2']);
 });
 
+test('ui: bind / world / tokens UI - every new selector is in the markup, world roundtrips through the entity model, doc tokens are exposed by the pipeline api', () => {
+    const src = readFileSync(new URL('../src/ui.js', import.meta.url), 'utf8');
+    for (const cls of ['ent-world', 'ent-tokens-save', 'ent-inuse', 'ent-bind-versions', 'ent-bind-activate']) {
+        assert.ok(src.includes(`q('.${cls}')`), `.${cls} must be queried`);
+        assert.ok(src.includes(`class="text_pole ${cls}"`) || src.includes(`${cls} `) || src.includes(`cls: '${cls}`) || src.includes(`class="ifimgen-list ${cls}"`), `.${cls} must be in the markup`);
+    }
+    // the "make active" and "save tokens" buttons are only wired when the entry is saved (currentId)
+    assert.ok(src.includes('settings.activeProfiles[owner] = saved.id'));
+    // world: parsed like facets, exported / imported, expanded as $kw.key after Details
+    const e = createEntity('characters', { name: 'Seb', keyword: 'seb', facets: 'outfit: blue shirt', world: 'apartment: small studio, brick wall\nnpc_william: a lanky man, wire glasses' });
+    assert.deepEqual(e.world.map(f => f.key), ['apartment', 'npc_william']);
+    const ex = expandScene({ scene: '$seb in $seb.apartment with $seb.npc_william wearing $seb.outfit', characters: [e], personas: [] });
+    assert.ok(ex.text.includes('small studio, brick wall') && ex.text.includes('wire glasses') && ex.text.includes('blue shirt'), ex.text);
+    const back = importEntities('characters', [], exportEntities('characters', [e]));
+    assert.equal(back.added, 1);
+    const pipeSrc = readFileSync(new URL('../src/pipeline.js', import.meta.url), 'utf8');
+    assert.ok(pipeSrc.includes('sceneDocTokens:'), 'pipeline exposes the doc tokens for the save-tokens popup');
+});
+
 test('compareVersions: numeric per segment, leading v ignored, missing segments are 0', () => {
     assert.equal(compareVersions('0.10.0', '0.9.1'), 1);
     assert.equal(compareVersions('v0.9.0', '0.9.0'), 0);

@@ -40,7 +40,10 @@ const en = {
     btn_new: 'New', box_identity: 'Identity', lbl_name: 'Name', lbl_keyword: 'Keyword ($)', lbl_aliases: 'Aliases', ph_aliases: 'comma separated',
     box_fragments: 'Prompt fragments', lbl_tags: 'Tags (danbooru)', lbl_natural: 'Natural description', lbl_negative: 'Negative',
     lbl_details: 'Details ($kw.key)',
-    ph_details: 'one per line, key: description\noutfit: white button-up shirt, black skirt\nback: a big tattoo on the left shoulder blade\nnsfw: small breasts, pierced navel',
+    ph_details: 'one per line, key: description
+outfit: white button-up shirt, black skirt
+back: a big tattoo on the left shoulder blade
+nsfw: small breasts, pierced navel',
     note_details: 'Suggested keys: {keys} (any key works, Vietnamese too: <code>trang phục:</code> becomes <code>$kw.trang_phuc</code>). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).',
     lbl_loras: 'LoRA lines', ph_loras: '<lora:name:0.8> one per line', lbl_lorapos: 'LoRA position',
     box_bind: 'Bind — auto-load when opened',
@@ -218,7 +221,10 @@ const vi = {
     btn_new: 'Mới', box_identity: 'Định danh', lbl_name: 'Tên', lbl_keyword: 'Keyword ($)', lbl_aliases: 'Tên gọi khác', ph_aliases: 'cách nhau bằng dấu phẩy',
     box_fragments: 'Mảnh prompt', lbl_tags: 'Tags (danbooru)', lbl_natural: 'Mô tả tự nhiên', lbl_negative: 'Negative',
     lbl_details: 'Chi tiết ($kw.key)',
-    ph_details: 'mỗi dòng một mục, key: mô tả\noutfit: áo sơ mi trắng, váy đen\nback: hình xăm lớn ở bả vai trái\nnsfw: ngực nhỏ, khuyên rốn',
+    ph_details: 'mỗi dòng một mục, key: mô tả
+outfit: áo sơ mi trắng, váy đen
+back: hình xăm lớn ở bả vai trái
+nsfw: ngực nhỏ, khuyên rốn',
     note_details: 'Key gợi ý: {keys} (key chữ thường bất kỳ đều được). Planner chỉ thấy danh sách token, ví dụ <code>$yenka.back</code>, và chèn token vào cảnh khi phần đó lộ ra; nội dung lưu sẵn được ghép vào lúc compile (hoặc do LLM refine hòa trộn).',
     lbl_loras: 'Dòng LoRA', ph_loras: '<lora:name:0.8> mỗi dòng một cái', lbl_lorapos: 'Vị trí LoRA',
     box_bind: 'Bind — tự nạp khi mở',
