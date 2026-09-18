@@ -822,6 +822,10 @@ test('NSFW preset: priority ladder, focus over wide, explicit anatomy, motion in
     const p = BUILTIN_PRESETS.find(x => x.id === 'nsfw_explicit');
     const tg = renderPlannerPrompt(p, { paragraphs: [{ index: 1, text: 'x' }], count: 2, roster: '', dialect: 'tags' }).system;
     for (const k of ['FOCUS OVER WIDE', 'nipple focus', 'penetration focus', 'MOTION IN A STILL', 'motion lines', 'FLUIDS', 'CLOTHING STATE', 'EXPRESSION UNDER SEX', 'ahegao', 'at most one per reply', 'WHAT TO DRAW']) assert.ok(tg.includes(k), k);
+    // v2 (from the chatu8 preset): one instant / <=2 people / <=1 woman, POV ladder, frame scope + occlusion, breast physics by pose,
+    // 3-part contact points, directional light, weights + fixed tag order (tags only), self-check, denser NSFW tags
+    for (const k of ['ONE INSTANT, FEW PEOPLE', 'POV LADDER', 'FRAME SCOPE', 'covered nipples', 'BODY PHYSICS BY POSE', 'hanging breasts', 'CONTACT POINTS', 'LIGHT WITH A DIRECTION', 'WEIGHTS (tags dialect only', 'TAG ORDER (tags dialect)', 'CHECK BEFORE ANSWERING', '45-70']) assert.ok(tg.includes(k), k);
+    assert.ok(!renderPlannerPrompt(p, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural' }).system.includes('45-70'), 'tag density applies to the tags dialect only');
     assert.ok(tg.includes('EXAMPLES (tags') && !tg.includes('EXAMPLE (roster'), 'NSFW example replaces the default one');
     assert.ok(tg.includes('"final"') && tg.includes('TWO VERSIONS'), 'same raw prompt + final contract');
     assert.ok(!/\{\{/.test(tg), 'no leftover placeholder');
