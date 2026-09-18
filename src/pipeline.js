@@ -71,10 +71,14 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
      * no card text (description, personality, scenario...) is ever read.
      */
     function chatIdentity(ctx) {
-        const chatId = (typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? '';
+        // Root chat name: a branch / checkpoint stores its parent in chat_metadata.main_chat, so a binding made in the
+        // parent follows every branch without re-binding.
+        const current = (typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? '';
+        const root = ctx.chatMetadata?.main_chat ?? ctx.chat_metadata?.main_chat ?? '';
+        const chatId = String(root || current);
         const charAvatar = ctx.characters?.[ctx.characterId]?.avatar ?? '';
         const personaAvatar = ctx.powerUserSettings?.persona_avatar ?? ctx.userAvatar ?? '';
-        return { chatId: String(chatId), charAvatar, personaAvatar };
+        return { chatId, chatFile: String(current), charAvatar, personaAvatar, activeProfiles: settings.activeProfiles ?? {} };
     }
 
     function contextText(ctx, messageId, k) {

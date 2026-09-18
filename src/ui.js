@@ -610,7 +610,8 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         }
         // Working copy of the binding lists while editing (committed on Save).
         let bindState = { chats: [], characters: [], personas: [] };
-        const currentChatId = () => { const ctx = getContext(); return String((typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? ''); };
+        // ROOT chat name (a branch / checkpoint keeps its parent's name in chat_metadata.main_chat) - same rule as the pipeline.
+        const currentChatId = () => { const ctx = getContext(); const cur = (typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? ''; return String(ctx.chatMetadata?.main_chat ?? ctx.chat_metadata?.main_chat ?? '') || String(cur); };
         // Only identifiers + display names are taken from ST here (avatar filename, card name, persona key).
         const cardList = () => (getContext().characters ?? []).map(ch => ({ id: ch.avatar, name: ch.name || ch.avatar }));
         const personaList = () => Object.entries(getContext().powerUserSettings?.personas ?? {}).map(([id, name]) => ({ id, name: name || id }));
@@ -636,8 +637,9 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
                 bindState.chats = bindState.chats.includes(id) ? bindState.chats.filter(x => x !== id) : [...bindState.chats, id];
                 renderBind(null);
             });
-            q('.ent-bind-char-add').addEventListener('click', () => { const v = q('.ent-bind-char-select').value; if (v && !bindState.characters.includes(v)) { bindState.characters.push(v); renderBind(null); } });
-            q('.ent-bind-persona-add').addEventListener('click', () => { const v = q('.ent-bind-persona-select').value; if (v && !bindState.personas.includes(v)) { bindState.personas.push(v); renderBind(null); } });
+            // A profile is one version of ONE card / ONE persona: picking another replaces the previous one.
+            q('.ent-bind-char-add').addEventListener('click', () => { const v = q('.ent-bind-char-select').value; if (v) { bindState.characters = [v]; renderBind(null); } });
+            q('.ent-bind-persona-add').addEventListener('click', () => { const v = q('.ent-bind-persona-select').value; if (v) { bindState.personas = [v]; renderBind(null); } });
             panel.addEventListener('click', ev => {
                 const x = ev.target.closest('[data-unbind]'); if (!x) return;
                 const key = x.dataset.unbind; bindState[key] = bindState[key].filter(id => id !== x.dataset.id); renderBind(null);

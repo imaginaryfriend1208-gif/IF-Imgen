@@ -71,6 +71,8 @@ export function defaultSettings() {
         // presetOverrides[builtinId] = system prompt saved over a built-in preset (Save = overwrite, no fork needed)
         data: { characters: [], personas: [], styles: [], presets: [], presetOverrides: {}, testImages: [] },
         defaultStyleId: '',
+        // card / persona avatar -> id of the profile that is the ACTIVE version of that card (a card may own several).
+        activeProfiles: {},
     };
 }
 

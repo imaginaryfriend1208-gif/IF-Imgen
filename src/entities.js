@@ -44,12 +44,14 @@ export function createEntity(kind, partial = {}) {
         world: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.world),
         loras: splitList(partial.loras),               // ["<lora:x:0.8>", ...]
         loraPosition: LORA_POSITIONS.includes(partial.loraPosition) ? partial.loraPosition : 'front',
-        // Binding = "auto-load this entity when that chat / card / persona is open".
+        // Binding. `characters` / `personas` hold at most ONE avatar: a profile is one version of one card (a card may own
+        // several profiles - the active one is chosen in settings.activeProfiles). `chats` = guest appearances (root
+        // chat names, so branches count). `always` only advertises the token to the LLM, it never auto-loads.
         // Only identifiers are stored. Nothing is ever read FROM the card or persona.
         bind: {
-            chats: splitList(partial.bind?.chats),           // ST chat ids (getCurrentChatId)
-            characters: splitList(partial.bind?.characters), // ST card avatar filenames (identity only)
-            personas: splitList(partial.bind?.personas),     // ST persona avatar filenames (identity only)
+            chats: splitList(partial.bind?.chats),                        // ROOT chat names (chat_metadata.main_chat or the file name)
+            characters: splitList(partial.bind?.characters).slice(0, 1),  // card avatar filename
+            personas: splitList(partial.bind?.personas).slice(0, 1),      // persona avatar filename
             always: Boolean(partial.bind?.always),
         },
         // Profile / avatar image (characters + personas only) - see src/profile.js.
@@ -98,12 +100,49 @@ export function matchByKeyword(list, text) {
     return out;
 }
 
-export function isBound(e, { chatId, charAvatar, personaAvatar } = {}) {
-    if (e.bind?.always) return true;
+/**
+ * Chat identity used for binding. `chatId` is the ROOT chat name (a branch / checkpoint keeps its parent's name), so a
+ * binding made in the parent chat follows every branch. `activeProfiles` maps card / persona avatar -> the entity id
+ * chosen as the active version of that card (settings.activeProfiles).
+ * @typedef {{ chatId?:string, charAvatar?:string, personaAvatar?:string, activeProfiles?:Record<string,string> }} Ident
+ */
+
+/** The profile bound to `avatar` that is active: the one picked in activeProfiles, else the only / first bound one. */
+export function activeProfileFor(list, avatar, activeProfiles = {}) {
+    if (!avatar) return null;
+    const owned = (list ?? []).filter(e => e.bind?.characters?.includes(avatar) || e.bind?.personas?.includes(avatar));
+    if (!owned.length) return null;
+    const picked = activeProfiles?.[avatar];
+    return owned.find(e => e.id === picked) ?? owned[0];
+}
+
+/** Official: the active profile of the open card / persona. Guest: bound to this (root) chat. `always` does NOT count. */
+export function isActive(e, list, { chatId, charAvatar, personaAvatar, activeProfiles } = {}) {
     if (chatId && e.bind?.chats?.includes(chatId)) return true;
-    if (charAvatar && e.bind?.characters?.includes(charAvatar)) return true;
-    if (personaAvatar && e.bind?.personas?.includes(personaAvatar)) return true;
+    if (charAvatar && e.bind?.characters?.includes(charAvatar)) return activeProfileFor(list, charAvatar, activeProfiles)?.id === e.id;
+    if (personaAvatar && e.bind?.personas?.includes(personaAvatar)) return activeProfileFor(list, personaAvatar, activeProfiles)?.id === e.id;
     return false;
+}
+
+/**
+ * Listed for the LLM: active for this chat, or `always` (token advertised). Profiles of the open card that are NOT the
+ * active version are hidden even when marked always, so two versions of one person never both reach the roster.
+ * `list` = all entities of that kind (needed to know which version is active); defaults to [e] for legacy callers.
+ */
+export function isBound(e, ident = {}, list = null) {
+    const all = list ?? [e];
+    if (isActive(e, all, ident)) return true;
+    if (!e.bind?.always) return false;
+    const owner = e.bind?.characters?.[0] || e.bind?.personas?.[0] || '';
+    const ownerOpen = Boolean(owner) && (owner === ident.charAvatar || owner === ident.personaAvatar);
+    return !ownerOpen; // always-on, but an inactive version of the open card stays out
+}
+
+/** Why an entity is in play for this chat: 'official' (active version of the open card / persona), 'guest' (bound to this chat), 'always', or ''. */
+export function bindReason(e, list, ident = {}) {
+    if (ident.chatId && e.bind?.chats?.includes(ident.chatId)) return 'guest';
+    if (isActive(e, list, ident)) return 'official';
+    return isBound(e, ident, list) ? 'always' : '';
 }
 
 /**
@@ -117,12 +156,18 @@ export function isBound(e, { chatId, charAvatar, personaAvatar } = {}) {
  */
 export function resolveEntities(settings, { text, chatId, charAvatar, personaAvatar }) {
     const d = settings.data;
-    const byKeyChars = matchByKeyword(d.characters, text);
-    const byKeyPersonas = matchByKeyword(d.personas, text);
+    const ident = { chatId, charAvatar, personaAvatar, activeProfiles: settings.activeProfiles ?? {} };
+    // Only entities in play for this chat can be matched by keyword: the active version of the open card / persona,
+    // guests bound to this chat, and always-on orphans. An inactive version of the open card is never picked, even by name.
+    const inPlay = list => list.filter(e => isBound(e, ident, list));
+    const byKeyChars = matchByKeyword(inPlay(d.characters), text);
+    const byKeyPersonas = matchByKeyword(inPlay(d.personas), text);
     const anyKeyword = byKeyChars.length + byKeyPersonas.length > 0;
-    const bound = list => list.filter(e => isBound(e, { chatId, charAvatar, personaAvatar }));
-    const characters = anyKeyword ? byKeyChars : bound(d.characters);
-    const personas = anyKeyword ? byKeyPersonas : bound(d.personas);
+    // No keyword at all -> the official / guest entities only. `always` never auto-loads (an always-on orphan used to
+    // land in every chat that mentioned nobody - that was the Rosario-in-Sebastian's-chat bug).
+    const active = list => list.filter(e => isActive(e, list, ident));
+    const characters = anyKeyword ? byKeyChars : active(d.characters);
+    const personas = anyKeyword ? byKeyPersonas : active(d.personas);
     // Styles have no keyword and no binding: the one marked default is applied to every image.
     const style = d.styles.find(e => e.id === settings.defaultStyleId) ?? null;
     return { characters, personas, style };
@@ -130,15 +175,16 @@ export function resolveEntities(settings, { text, chatId, charAvatar, personaAva
 
 /** Roster text handed to the step-2 LLM: keyword, base look, every Details / World entry as "token: text" (see rosterLine). */
 export function rosterText(settings, { chatId, charAvatar, personaAvatar }, dialect = 'tags') {
-    const ident = { chatId, charAvatar, personaAvatar };
+    const ident = { chatId, charAvatar, personaAvatar, activeProfiles: settings.activeProfiles ?? {} };
     const lines = [];
     const add = (label, list) => { for (const e of list) lines.push(rosterLine(e, label, dialect)); };
     const d = settings.data;
-    add('character', d.characters.filter(e => isBound(e, ident)));
-    add('user persona', d.personas.filter(e => isBound(e, ident)));
-    // Unbound ones are still listed by keyword so the LLM can mention them.
-    add('character', d.characters.filter(e => !isBound(e, ident)));
-    add('user persona', d.personas.filter(e => !isBound(e, ident)));
+    // Official / guest first, then always-on orphans. Nothing else: an unbound, not-always profile (or an inactive
+    // version of the open card) must not be offered to the LLM at all.
+    add('character', d.characters.filter(e => isActive(e, d.characters, ident)));
+    add('user persona', d.personas.filter(e => isActive(e, d.personas, ident)));
+    add('character', d.characters.filter(e => !isActive(e, d.characters, ident) && isBound(e, ident, d.characters)));
+    add('user persona', d.personas.filter(e => !isActive(e, d.personas, ident) && isBound(e, ident, d.personas)));
     return lines.join(String.fromCharCode(10));
 }
 

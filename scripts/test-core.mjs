@@ -11,7 +11,7 @@ import { collectChatImages, collectProfileImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
 import { abortable, createPipeline } from '../src/pipeline.js';
 import { parseFacets, facetsText, expandScene, expandSceneDoc, buildRefinePrompt, buildScenePrompt, parseRefined, rosterLine, DEFAULT_SCENE_SYSTEM } from '../src/scene.js';
-import { rosterText, isBound } from '../src/entities.js';
+import { rosterText, isBound, isActive, activeProfileFor, bindReason } from '../src/entities.js';
 import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft, profileFacets, PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from '../src/profile.js';
 import { normalizeProfile, PROFILE_VERSIONS } from '../src/entities.js';
@@ -114,7 +114,7 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
 
 const s = defaultSettings();
 const lyna = createEntity('characters', { name: 'Lyna', keyword: 'lyna', aliases: 'Ly, dark elf', tags: '1girl, silver hair', loras: ['<lora:lyna:0.8>'], loraPosition: 'front', bind: { characters: ['lyna.png'] } });
-const me = createEntity('personas', { name: 'Me', keyword: 'me', tags: 'pov, male hands', bind: { always: true } });
+const me = createEntity('personas', { name: 'Me', keyword: 'me', tags: 'pov, male hands', bind: { always: true, personas: ['x'] } });
 const style = createEntity('styles', { name: 'Anime', keyword: 'anime', tags: 'anime style, flat color', loras: ['<lora:anime:0.5>'], loraPosition: 'after_style', negative: 'realistic' });
 s.data.characters.push(lyna); s.data.personas.push(me); s.data.styles.push(style); s.defaultStyleId = style.id;
 
@@ -139,10 +139,11 @@ test('Vietnamese: "Dư Tô" -> $du_to, alias with space, diacritic text matches,
     assert.deepEqual(r.unknown, []);
 });
 
-test('resolveEntities: no keyword -> bound entities; keyword -> only the named ones; default style', () => {
+test('resolveEntities: no keyword -> official entities; keyword -> only the named ones; default style', () => {
     const r = resolveEntities(s, { text: 'a quiet room', charAvatar: 'lyna.png', personaAvatar: 'x' });
-    assert.equal(r.characters[0].id, lyna.id, 'bound char used when planner named nobody');
-    assert.equal(r.personas[0].id, me.id);
+    assert.equal(r.characters[0].id, lyna.id, 'official char used when planner named nobody');
+    assert.equal(r.personas[0].id, me.id, 'official persona too');
+    assert.equal(resolveEntities(s, { text: 'a quiet room', charAvatar: 'lyna.png', personaAvatar: 'other' }).personas.length, 0, 'always alone never auto-loads');
     assert.equal(r.style.id, style.id);
     const r2 = resolveEntities(s, { text: 'a quiet room', charAvatar: 'other.png' });
     assert.equal(r2.characters.length, 0);
@@ -253,8 +254,9 @@ test('expandScene: $kw.facet, $char.facet, $userOutfit forms; unknown tokens dro
 test('roster lists detail tokens so the planner knows what exists', () => {
     const line = rosterLine(yenka, 'user persona');
     assert.ok(line.includes('$yenka') && line.includes('$yenka.outfit:') && line.includes('$yenka.back:'));
-    const s3 = defaultSettings(); s3.data.personas.push(yenka);
-    assert.ok(rosterText(s3, {}).includes('$yenka.outfit:'));
+    const s3 = defaultSettings(); s3.data.personas.push(createEntity('personas', { ...yenka, bind: { personas: ['yenka.png'] } }));
+    assert.ok(rosterText(s3, { personaAvatar: 'yenka.png' }).includes('$yenka.outfit:'), 'bound persona listed with its detail texts');
+    assert.ok(!rosterText(s3, { personaAvatar: 'other.png' }).includes('$yenka'), 'not in play -> not offered to the LLM');
 });
 
 test('refine prompt: cast carries base look + only referenced details; style + expanded scene included', () => {
@@ -736,6 +738,66 @@ test('profile image: framing words differ per shot and spell out bust / full (wa
 
 if (process.exitCode) { console.log(`\nFAIL (${passed} passed)`); process.exit(1); }
 console.log(`PASS (${passed} cases)`);
+
+test('binding model: official (active version of the open card) / guest (root chat) / always (advertised only)', () => {
+    const v1 = createEntity('characters', { name: 'Seb v1', keyword: 'seb', bind: { characters: ['seb.png'] } });
+    const v2 = createEntity('characters', { name: 'Seb v2', keyword: 'seb', bind: { characters: ['seb.png'], always: true } });
+    const ros = createEntity('characters', { name: 'Rosario', keyword: 'rosario', bind: { characters: ['ros.png'], always: true, chats: ['guest-chat'] } });
+    const orphanAlways = createEntity('characters', { name: 'Ghost', keyword: 'ghost', bind: { always: true } });
+    const orphan = createEntity('characters', { name: 'Nobody', keyword: 'nobody' });
+    const list = [v1, v2, ros, orphanAlways, orphan];
+    // one card per profile: extra avatars are dropped
+    assert.deepEqual(createEntity('characters', { name: 'X', bind: { characters: ['a.png', 'b.png'], personas: ['p1', 'p2'] } }).bind.characters, ['a.png']);
+    // the active version: picked in activeProfiles, else the first bound one
+    assert.equal(activeProfileFor(list, 'seb.png', {}).id, v1.id);
+    assert.equal(activeProfileFor(list, 'seb.png', { 'seb.png': v2.id }).id, v2.id);
+    assert.equal(activeProfileFor(list, 'nope.png', {}), null);
+    const sebChat = { chatId: 'seb-main', charAvatar: 'seb.png', activeProfiles: { 'seb.png': v2.id } };
+    assert.equal(isActive(v2, list, sebChat), true, 'active version is official');
+    assert.equal(isActive(v1, list, sebChat), false, 'inactive version is not');
+    assert.equal(isBound(v1, sebChat, list), false, 'inactive version is not even listed');
+    assert.equal(isBound(v2, sebChat, list), true);
+    assert.equal(isActive(ros, list, sebChat), false, 'Rosario (always, bound to another card) is NOT active in Sebastian chat');
+    assert.equal(isBound(ros, sebChat, list), true, '... but always advertises its token');
+    assert.equal(bindReason(ros, list, sebChat), 'always');
+    assert.equal(bindReason(v2, list, sebChat), 'official');
+    assert.equal(isBound(orphan, sebChat, list), false, 'orphan without always is invisible');
+    assert.equal(isBound(orphanAlways, sebChat, list), true);
+    // guest: bound to the (root) chat -> official for that chat whoever the card is
+    const guestChat = { chatId: 'guest-chat', charAvatar: 'seb.png', activeProfiles: {} };
+    assert.equal(isActive(ros, list, guestChat), true); assert.equal(bindReason(ros, list, guestChat), 'guest');
+    // persona side works the same
+    const me = createEntity('personas', { name: 'Me', keyword: 'me', bind: { personas: ['me.png'] } });
+    assert.equal(isActive(me, [me], { personaAvatar: 'me.png' }), true);
+    assert.equal(isActive(me, [me], { personaAvatar: 'other.png' }), false);
+});
+
+test('resolveEntities: no keyword -> official / guest only (never always); keyword -> only entities in play; inactive version never matched', () => {
+    const s = defaultSettings();
+    const v1 = createEntity('characters', { name: 'Seb v1', keyword: 'seb', tags: 'v1', bind: { characters: ['seb.png'] } });
+    const v2 = createEntity('characters', { name: 'Seb v2', keyword: 'seb', tags: 'v2', bind: { characters: ['seb.png'] } });
+    const ros = createEntity('characters', { name: 'Rosario', keyword: 'rosario', bind: { characters: ['ros.png'], always: true } });
+    const orphan = createEntity('characters', { name: 'Nobody', keyword: 'nobody' });
+    s.data.characters.push(v1, v2, ros, orphan);
+    s.activeProfiles = { 'seb.png': v2.id };
+    const here = { chatId: 'seb-main', charAvatar: 'seb.png', personaAvatar: '' };
+    // no keyword -> the active Sebastian only; Rosario (always) stays out
+    assert.deepEqual(resolveEntities(s, { text: 'a man sits by the window', ...here }).characters.map(e => e.name), ['Seb v2']);
+    // keyword -> the active version, once
+    assert.deepEqual(resolveEntities(s, { text: '$seb smiles', ...here }).characters.map(e => e.name), ['Seb v2']);
+    // always-on Rosario can be CALLED by keyword
+    assert.deepEqual(resolveEntities(s, { text: '$rosario and $seb', ...here }).characters.map(e => e.name).sort(), ['Rosario', 'Seb v2']);
+    // orphan without always: not even by keyword -> counts as 'no keyword', the official character is used
+    assert.deepEqual(resolveEntities(s, { text: '$nobody here', ...here }).characters.map(e => e.name), ['Seb v2']);
+    assert.deepEqual(resolveEntities(s, { text: '$nobody here', chatId: 'x', charAvatar: 'other.png' }).characters, [], 'and nothing at all where no card is bound');
+    // roster: official first, then always; inactive version and plain orphan absent
+    const roster = rosterText(s, here);
+    assert.ok(roster.indexOf('Seb v2') >= 0 && roster.indexOf('Seb v2') < roster.indexOf('Rosario'));
+    assert.ok(!roster.includes('Seb v1') && !roster.includes('Nobody'));
+    // guest chat: Rosario official there, still no auto-load of Sebastian's inactive version
+    s.data.characters.find(e => e.id === ros.id).bind.chats = ['seb-main'];
+    assert.deepEqual(resolveEntities(s, { text: 'two men talk', ...here }).characters.map(e => e.name).sort(), ['Rosario', 'Seb v2']);
+});
 
 test('compareVersions: numeric per segment, leading v ignored, missing segments are 0', () => {
     assert.equal(compareVersions('0.10.0', '0.9.1'), 1);
