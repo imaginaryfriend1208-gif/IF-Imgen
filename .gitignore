@@ -33,3 +33,7 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# --- third-party reference presets / test contexts (local only) ---
+st_*.json
+*chatu*
