@@ -36,6 +36,7 @@ export function createEntity(kind, partial = {}) {
         keyword: normalizeKeyword(partial.keyword || partial.name || ''),
         aliases: splitList(partial.aliases).map(normalizeKeyword).filter(Boolean),
         tags: String(partial.tags ?? '').trim(),        // danbooru tags
+        lead: String(partial.lead ?? '').trim(),        // styles: short opener (medium + look) placed before the scene; rest of the style follows it
         natural: String(partial.natural ?? '').trim(),  // natural-language description
         negative: String(partial.negative ?? '').trim(),
         facets: partial.kind === 'styles' || kind === 'styles' ? [] : parseFacets(partial.facets), // [{key:'back', text:'...'}] referenced as $keyword.back

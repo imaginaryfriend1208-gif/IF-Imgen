@@ -704,19 +704,19 @@ test('ui: profile box - onJobs hook is declared AFTER savedEntity (const TDZ wou
 
 test('compilePrompt sceneFirst (profile images): the framing sentence opens the prompt, the long style paragraph follows it - both dialects', () => {
     const settings = defaultSettings();
-    const style = createEntity('styles', { name: 'S', natural: 'Textured paint layering, impasto brushwork, glowing highlights, dreamlike atmosphere.', tags: 'oil painting, impasto', loras: '<lora:x:1>' });
+    const style = createEntity('styles', { name: 'S', natural: 'Textured paint layering with glowing highlights. Impasto brushwork, dreamlike atmosphere.', tags: 'oil painting, impasto', loras: '<lora:x:1>' });
     const e = createEntity('characters', { name: 'Ly', keyword: 'ly', natural: 'a tall woman with black hair' });
     const draft = profileDraft({ entity: e, dialect: 'natural', shot: 'full', sfw: true });
     const nat = compilePrompt({ scene: draft, characters: [e], personas: [], style, settings, backend: 'sd', merged: true, dialect: 'natural', sceneFirst: true }).prompt;
     const noLora = nat.replace(/<lora:[^>]+>\s*/g, '');
     assert.ok(noLora.startsWith('A full-body shot of Ly, standing'), noLora.slice(0, 80));
-    assert.ok(noLora.indexOf('feet inside the frame') < noLora.indexOf('impasto'), 'framing before style');
+    assert.ok(noLora.indexOf('feet inside the frame') < noLora.indexOf('Textured paint'), 'framing before the whole style (lead included)');
     assert.ok(nat.startsWith('<lora:x:1>'), 'LoRA token still leads');
     const tg = compilePrompt({ scene: 'solo, full body, feet visible', characters: [e], personas: [], style, settings, backend: 'sd', merged: true, dialect: 'tags', sceneFirst: true }).prompt;
     assert.ok(tg.indexOf('full body') < tg.indexOf('oil painting'), tg);
     // default order (chat images) unchanged: style first, scene last
     const chat = compilePrompt({ scene: 'she sits by the window', characters: [e], personas: [], style, settings, backend: 'sd', merged: false, dialect: 'natural' }).prompt;
-    assert.ok(chat.indexOf('impasto') < chat.indexOf('she sits'), chat);
+    assert.ok(chat.indexOf('Textured paint layering') < chat.indexOf('she sits') && chat.indexOf('she sits') < chat.indexOf('Impasto brushwork'), 'lead (first sentence) before the scene, the rest of the style after it: ' + chat);
 });
 
 test('profile image: framing words differ per shot and spell out bust / full (waist, feet, distance)', () => {

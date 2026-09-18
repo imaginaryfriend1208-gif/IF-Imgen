@@ -62,6 +62,32 @@ function joinProse(...parts) {
     return out.join(' ');
 }
 
+/** Split a style into LEAD (opens the prompt) and BODY (follows the scene). An explicit lead field wins;
+ * otherwise the first sentence (prose) / first 6 tags become the lead and the rest is the body. */
+export function styleParts(style, natural) {
+    if (!style) return { lead: '', body: '' };
+    const raw = String((natural ? (style.natural || style.tags) : (style.tags || style.natural)) || '').trim();
+    const text = natural ? softenTags(raw) : raw;
+    const lead = String(style.lead || '').trim();
+    if (lead) return { lead, body: text };
+    if (!text) return { lead: '', body: '' };
+    if (natural) {
+        const m = text.match(/^(.+?[.!?])(\s+|$)([\s\S]*)$/);
+        return m ? { lead: m[1].trim(), body: m[3].trim() } : { lead: text, body: '' };
+    }
+    const parts = text.split(',').map(t => t.trim()).filter(Boolean);
+    return { lead: parts.slice(0, 6).join(', '), body: parts.slice(6).join(', ') };
+}
+
+/** Clip a style body to ~max chars at a sentence / tag boundary (never mid-word). */
+export function clipStyle(text, max = 350) {
+    const t = String(text || '').trim();
+    if (t.length <= max) return t;
+    const cut = t.slice(0, max);
+    const dot = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf(', '));
+    return (dot > max * 0.5 ? cut.slice(0, dot + 1) : cut).trim().replace(/[,;:]$/, '');
+}
+
 /**
  * @param {{ scene:string, characters:object[], personas:object[], style:object|null, settings:object, backend:'sd'|'nai', merged?:boolean, dialect?:string }} a
  *   <lora:...> tags stay in the prompt; in workflow mode the sd backend turns them into LoRA nodes.
@@ -92,15 +118,19 @@ export function compilePrompt(a) {
         // Prose: LoRA tags stay as separate tokens (the backend strips them into nodes); everything else is sentences.
         const loras = [...lorasAt(all, 'front'), ...lorasAt(all, 'after_style'), ...lorasAt(all, 'end')].join(' ');
         const cast = [a.merged ? [] : a.characters.map(pick), a.merged ? [] : a.personas.map(pick)];
+        // Style = LEAD (medium + look, opens the prompt) + BODY (the rest, clipped, after the scene so the
+        // scene / framing is never buried behind a long style paragraph).
+        const st = styleParts(a.style, true);
         const body = a.sceneFirst
-            ? joinProse(scene, ...cast, styleList.map(pick))
-            : joinProse(styleList.map(pick), ...cast, scene);
+            ? joinProse(scene, ...cast, st.lead, clipStyle(st.body))
+            : joinProse(st.lead, ...cast, scene, clipStyle(st.body));
         prompt = [loras, body].filter(Boolean).join(' ');
     } else {
         const cast = [a.merged ? [] : a.characters.map(pick), a.merged ? [] : a.personas.map(pick)];
+        const st = styleParts(a.style, false);
         prompt = a.sceneFirst
-            ? joinTags(lorasAt(all, 'front'), useQuality ? g.qualityPrefix : '', scene, styleList.map(pick), lorasAt(all, 'after_style'), ...cast, lorasAt(all, 'end'))
-            : joinTags(lorasAt(all, 'front'), useQuality ? g.qualityPrefix : '', styleList.map(pick), lorasAt(all, 'after_style'), ...cast, scene, lorasAt(all, 'end'));
+            ? joinTags(lorasAt(all, 'front'), useQuality ? g.qualityPrefix : '', scene, st.lead, lorasAt(all, 'after_style'), ...cast, clipStyle(st.body), lorasAt(all, 'end'))
+            : joinTags(lorasAt(all, 'front'), useQuality ? g.qualityPrefix : '', st.lead, lorasAt(all, 'after_style'), ...cast, scene, clipStyle(st.body), lorasAt(all, 'end'));
     }
     // Negative disabled -> send nothing at all (entity negatives included), for models that take no negative.
     const useNeg = prefs.useNegative !== '' ? prefs.useNegative : g.useNegative !== false;

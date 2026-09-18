@@ -520,6 +520,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             e ??= createEntity(kind);
             q('.ent-name').value = e.name;
             q('.ent-tags').value = e.tags; q('.ent-natural').value = e.natural; q('.ent-negative').value = e.negative;
+            if (isStyle) q('.ent-lead').value = e.lead || '';
             q('.ent-loras').value = e.loras.join('\n'); q('.ent-lorapos').value = e.loraPosition;
             if (isStyle) return;
             q('.ent-keyword').value = e.keyword; q('.ent-aliases').value = e.aliases.join(', ');
@@ -709,7 +710,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             if (isStyle) {
                 return createEntity(kind, {
                     id: base?.id, name: q('.ent-name').value, keyword: base?.keyword || q('.ent-name').value,
-                    tags: q('.ent-tags').value, natural: q('.ent-natural').value, negative: q('.ent-negative').value,
+                    lead: q('.ent-lead').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value, negative: q('.ent-negative').value,
                     loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
                 });
             }
@@ -1088,6 +1089,7 @@ function stylePanel({ tab, label, icon, hint }) {
         <div class="ifimgen-box">
             ${boxTitle('palette', t('box_style_profile'))}
             <div class="ifimgen-row"><label>${t('lbl_name')}</label><input class="text_pole ent-name" type="text" placeholder="${escapeHtml(t('ph_style_name'))}"></div>
+            <div class="ifimgen-row"><label>${t('lbl_lead')}</label><input class="text_pole ent-lead" type="text" placeholder="${escapeHtml(t('ph_lead'))}"></div>
             <div class="ifimgen-row"><label>${t('lbl_tags')}</label><textarea class="text_pole ent-tags" placeholder="anime style, flat color, clean lineart"></textarea></div>
             <div class="ifimgen-row"><label>${t('lbl_natural')}</label><textarea class="text_pole ent-natural" placeholder="soft anime illustration, pastel palette, clean lineart, cinematic lighting"></textarea></div>
             <div class="ifimgen-row"><label>${t('lbl_negative')}</label><input class="text_pole ent-negative" type="text" placeholder="realistic, 3d, photo"></div>
