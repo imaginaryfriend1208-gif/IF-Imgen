@@ -40,10 +40,14 @@ const en = {
     btn_new: 'New', box_identity: 'Identity', lbl_name: 'Name', lbl_keyword: 'Keyword ($)', lbl_aliases: 'Aliases', ph_aliases: 'comma separated',
     box_fragments: 'Prompt fragments', lbl_tags: 'Tags (danbooru)', lbl_natural: 'Natural description', lbl_negative: 'Negative',
     lbl_details: 'Details ($kw.key)',
-    ph_details: 'one per line, key: description
-outfit: white button-up shirt, black skirt
-back: a big tattoo on the left shoulder blade
-nsfw: small breasts, pierced navel',
+    lbl_world: 'World ($kw.key)', ph_world: 'places, side characters, recurring items - one per line, key: description\napartment: small studio, brick wall, mattress on the floor, fairy lights\nnpc_william: a lanky man in his 40s, grey buzz cut, wire glasses, brown corduroy jacket\ncar: dusty green 1990s Volvo estate',
+    note_world: 'Same token syntax as Details, kept apart so the look stays short. The scene planner may define new tokens ($kw.outfit_work, $kw.npc_x) at the top of a scene document - pull them in with the button below.',
+    btn_tokens_save: 'Save tokens from the latest scene', note_tokens_popup: 'Tokens the scene planner defined for this entry. Tick the ones to keep and choose where each goes.',
+    opt_dest_details: 'Details', opt_dest_world: 'World', st_token_exists: 'exists - will overwrite', st_no_tokens: 'No new tokens for ${kw} in the latest scene document.', st_tokens_saved: '{n} token(s) saved.',
+    lbl_in_use: 'In this chat', st_role_official: 'official', st_role_guest: 'guest', st_role_always: 'always (by keyword)', st_role_none: 'no profile in play for this chat',
+    st_versions_of: 'Versions of {name}:', btn_make_active: 'Use this version for the card', btn_is_active: 'Active version', st_made_active: '{name} is now the active version.', st_save_first: 'Save the entry first.',
+    note_always: 'Always = the LLM may call this entry by its $keyword in any chat. It is never added on its own; only the active version of the open card / persona and guests bound to this chat are.',
+    ph_details: 'one per line, key: description\noutfit: white button-up shirt, black skirt\nback: a big tattoo on the left shoulder blade\nnsfw: small breasts, pierced navel',
     note_details: 'Suggested keys: {keys} (any key works, Vietnamese too: <code>trang phục:</code> becomes <code>$kw.trang_phuc</code>). The planner only sees the token list, e.g. <code>$yenka.back</code>, and drops a token into the scene when that part is visible; the stored text is inserted at compile time (or merged by the refine LLM).',
     lbl_loras: 'LoRA lines', ph_loras: '<lora:name:0.8> one per line', lbl_lorapos: 'LoRA position',
     box_bind: 'Bind — auto-load when opened',
@@ -221,10 +225,14 @@ const vi = {
     btn_new: 'Mới', box_identity: 'Định danh', lbl_name: 'Tên', lbl_keyword: 'Keyword ($)', lbl_aliases: 'Tên gọi khác', ph_aliases: 'cách nhau bằng dấu phẩy',
     box_fragments: 'Mảnh prompt', lbl_tags: 'Tags (danbooru)', lbl_natural: 'Mô tả tự nhiên', lbl_negative: 'Negative',
     lbl_details: 'Chi tiết ($kw.key)',
-    ph_details: 'mỗi dòng một mục, key: mô tả
-outfit: áo sơ mi trắng, váy đen
-back: hình xăm lớn ở bả vai trái
-nsfw: ngực nhỏ, khuyên rốn',
+    lbl_world: 'Thế giới ($kw.key)', ph_world: 'địa điểm, nhân vật phụ, đồ vật hay lặp lại - mỗi dòng một key: mô tả\napartment: căn studio nhỏ, tường gạch, nệm trải sàn, đèn dây\nnpc_william: đàn ông gầy cao tuổi 40, tóc húi cua bạc, kính gọng thép, áo khoác nhung nâu\ncar: Volvo estate xanh rêu đời 90 phủ bụi',
+    note_world: 'Cùng cú pháp token với Chi tiết, tách riêng để phần ngoại hình không bị dày. Scene planner có thể tự đặt token mới ($kw.outfit_work, $kw.npc_x) ở đầu scene document - kéo về bằng nút bên dưới.',
+    btn_tokens_save: 'Lưu token từ scene mới nhất', note_tokens_popup: 'Các token scene planner đã đặt cho mục này. Tick cái muốn giữ và chọn nơi lưu cho từng cái.',
+    opt_dest_details: 'Chi tiết', opt_dest_world: 'Thế giới', st_token_exists: 'đã có - sẽ ghi đè', st_no_tokens: 'Không có token mới cho ${kw} trong scene document gần nhất.', st_tokens_saved: 'Đã lưu {n} token.',
+    lbl_in_use: 'Chat này', st_role_official: 'chính thức', st_role_guest: 'khách mời', st_role_always: 'luôn bật (gọi bằng keyword)', st_role_none: 'chưa có profile nào dùng cho chat này',
+    st_versions_of: 'Các phiên bản của {name}:', btn_make_active: 'Dùng phiên bản này cho card', btn_is_active: 'Phiên bản đang dùng', st_made_active: '{name} giờ là phiên bản đang dùng.', st_save_first: 'Lưu mục này trước đã.',
+    note_always: 'Luôn bật = LLM được phép gọi mục này bằng $keyword ở mọi chat. Không bao giờ tự thêm vào; chỉ phiên bản đang dùng của card / persona đang mở và khách mời gắn vào chat này mới tự vào.',
+    ph_details: 'mỗi dòng một mục, key: mô tả\noutfit: áo sơ mi trắng, váy đen\nback: hình xăm lớn ở bả vai trái\nnsfw: ngực nhỏ, khuyên rốn',
     note_details: 'Key gợi ý: {keys} (key chữ thường bất kỳ đều được). Planner chỉ thấy danh sách token, ví dụ <code>$yenka.back</code>, và chèn token vào cảnh khi phần đó lộ ra; nội dung lưu sẵn được ghép vào lúc compile (hoặc do LLM refine hòa trộn).',
     lbl_loras: 'Dòng LoRA', ph_loras: '<lora:name:0.8> mỗi dòng một cái', lbl_lorapos: 'Vị trí LoRA',
     box_bind: 'Bind — tự nạp khi mở',

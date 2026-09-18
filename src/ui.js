@@ -1,6 +1,6 @@
 // IF Imgen - drawer UI: Settings / Characters / Personas / Styles / Gallery / How to use / Generate.
 import { escapeHtml, downloadJson, downloadUrl, readFileAsText } from './util.js';
-import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS } from './entities.js';
+import { createEntity, upsertEntity, removeEntity, exportEntities, importEntities, LORA_POSITIONS, bindReason, activeProfileFor } from './entities.js';
 import { allPresets, createPreset, overwritePreset, resetPreset, BUILTIN_PRESETS, effectiveDialect } from './presets.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULERS } from './backends.js';
 import { workflowInfo, autoMapWorkflow } from './comfy.js';
@@ -491,10 +491,24 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         let currentId = list()[0]?.id ?? null;
         const isStyle = kind === 'styles';
 
+        // Role of an entry in the OPEN chat: official (active version of the open card / persona), guest (bound to this
+        // root chat), always (token advertised only), or nothing. Shown in the dropdown and in the "In this chat" line
+        // so the user always sees which profile the images will use.
+        const chatIdent = () => { const ctx = getContext(); const cur = (typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? ''; return { chatId: String(ctx.chatMetadata?.main_chat ?? ctx.chat_metadata?.main_chat ?? '') || String(cur), charAvatar: ctx.characters?.[ctx.characterId]?.avatar ?? '', personaAvatar: ctx.powerUserSettings?.persona_avatar ?? ctx.userAvatar ?? '', activeProfiles: settings.activeProfiles ?? {} }; };
+        const ROLE_MARK = { official: '● ', guest: '○ ', always: '∗ ', '': '' };
+        const roleOf = e => isStyle ? '' : bindReason(e, list(), chatIdent());
+        function renderInUse() {
+            const el = q('.ent-inuse'); if (!el) return;
+            const items = list();
+            const part = (label, arr) => arr.length ? `<span class="ifimgen-chip active">${escapeHtml(label)}</span> ${arr.map(e => escapeHtml(e.name)).join(', ')}` : '';
+            const parts = [part(t('st_role_official'), items.filter(e => roleOf(e) === 'official')), part(t('st_role_guest'), items.filter(e => roleOf(e) === 'guest')), part(t('st_role_always'), items.filter(e => roleOf(e) === 'always'))].filter(Boolean);
+            el.innerHTML = parts.length ? parts.join(' &middot; ') : `<span class="ifimgen-chip">${t('st_role_none')}</span>`;
+        }
         function refreshList() {
             const sel = q('.ent-select');
-            fillSelect(sel, list().map(e => ({ value: e.id, label: (isStyle && e.id === settings.defaultStyleId ? '★ ' : '') + (e.name || '(unnamed)') })), currentId, list().length ? null : t('st_none_opt'));
+            fillSelect(sel, list().map(e => ({ value: e.id, label: (isStyle && e.id === settings.defaultStyleId ? '★ ' : '') + ROLE_MARK[roleOf(e)] + (e.name || '(unnamed)') })), currentId, list().length ? null : t('st_none_opt'));
             q('.ent-count').textContent = t('st_saved_count', { n: list().length });
+            renderInUse();
             const def = q('.ent-default');
             if (def) {
                 const isDef = settings.defaultStyleId === currentId && currentId;
@@ -510,6 +524,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             if (isStyle) return;
             q('.ent-keyword').value = e.keyword; q('.ent-aliases').value = e.aliases.join(', ');
             q('.ent-facets').value = facetsText(e.facets);
+            q('.ent-world').value = facetsText(e.world ?? []);
             q('.ent-always').checked = e.bind.always;
             renderBind(e);
             renderProfile(e);
@@ -630,6 +645,20 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             q('.ent-bind-personas').innerHTML = chips(bindState.personas, pers, 'personas');
             fillSelect(q('.ent-bind-char-select'), cards.filter(x => !bindState.characters.includes(x.id)).map(x => ({ value: x.id, label: x.name })), '', t('st_all_cards'));
             fillSelect(q('.ent-bind-persona-select'), pers.filter(p => !bindState.personas.includes(p.id)).map(p => ({ value: p.id, label: p.name })), '', t('st_none_opt'));
+            // Versions: other saved profiles bound to the same card / persona, and which one is active.
+            const saved = list().find(x => x.id === currentId) ?? null;
+            const owner = bindState.characters[0] || bindState.personas[0] || '';
+            const siblings = owner ? list().filter(x => x.bind?.characters?.includes(owner) || x.bind?.personas?.includes(owner)) : [];
+            const activeId = owner ? activeProfileFor(list(), owner, settings.activeProfiles ?? {})?.id : null;
+            const verEl = q('.ent-bind-versions'), actBtn = q('.ent-bind-activate');
+            if (owner && siblings.length > 1) {
+                verEl.style.display = '';
+                verEl.innerHTML = `<span class="ifimgen-cap-k">${t('st_versions_of', { name: escapeHtml((cards.find(x => x.id === owner) ?? pers.find(x => x.id === owner))?.name ?? owner) })}</span> ` + siblings.map(x => `<span class="ifimgen-chip ${x.id === activeId ? 'active' : ''}">${x.id === activeId ? '● ' : ''}${escapeHtml(x.name)}</span>`).join(' ');
+            } else { verEl.style.display = 'none'; verEl.innerHTML = ''; }
+            const isActiveHere = Boolean(saved && owner && activeId === saved.id);
+            actBtn.style.display = owner && saved ? '' : 'none';
+            actBtn.disabled = isActiveHere || !saved;
+            actBtn.querySelector('span').textContent = isActiveHere ? t('btn_is_active') : t('btn_make_active');
         }
         if (!isStyle) {
             q('.ent-bind-chat-toggle').addEventListener('click', () => {
@@ -644,6 +673,36 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
                 const x = ev.target.closest('[data-unbind]'); if (!x) return;
                 const key = x.dataset.unbind; bindState[key] = bindState[key].filter(id => id !== x.dataset.id); renderBind(null);
             });
+            // Make THIS saved profile the active version of its card / persona (the others stay as alternatives).
+            q('.ent-bind-activate').addEventListener('click', () => {
+                const saved = list().find(x => x.id === currentId); if (!saved) return setStatus(t('st_save_first'), 'error');
+                const owner = saved.bind?.characters?.[0] || saved.bind?.personas?.[0]; if (!owner) return;
+                settings.activeProfiles ??= {}; settings.activeProfiles[owner] = saved.id; save();
+                renderBind(saved); refreshList(); setStatus(t('st_made_active', { name: saved.name }), 'ok');
+            });
+            // Save the ad-hoc tokens of the latest scene document into this entry (Details or World, per token).
+            q('.ent-tokens-save').addEventListener('click', async () => {
+                const saved = list().find(x => x.id === currentId); if (!saved) return setStatus(t('st_save_first'), 'error');
+                const ctx = getContext();
+                let id = ctx.chat.length - 1; while (id >= 0 && !pipeline.sceneDoc?.(id)) id--;
+                const all = id >= 0 ? (pipeline.sceneDocTokens?.(id) ?? []) : [];
+                const mine = all.filter(tk => tk.key === saved.keyword || (saved.aliases ?? []).includes(tk.key));
+                if (!mine.length) return setStatus(t('st_no_tokens', { kw: saved.keyword }), 'error');
+                const have = new Set([...(saved.facets ?? []), ...(saved.world ?? [])].map(f => f.key));
+                const guessWorld = tk => /^(npc|place|room|apartment|house|home|car|bike|pet|dog|cat|shop|bar|cafe|office|street|alley|city|town|park|beach|school|hotel)_?|_(place|room|alley|street|shop|bar|cafe|office|city|town)$/i.test(tk.facet);
+                const rows = mine.map((tk, i) => `<div class="ifimgen-row" style="align-items:flex-start"><label class="checkbox_label" style="min-width:0"><input type="checkbox" data-i="${i}" ${have.has(tk.facet) ? '' : 'checked'}> <b>$${escapeHtml(saved.keyword)}.${escapeHtml(tk.facet)}</b>${have.has(tk.facet) ? ` <span class="ifimgen-chip">${t('st_token_exists')}</span>` : ''}</label><select class="text_pole" data-dest="${i}" style="max-width:9em"><option value="facets" ${guessWorld(tk) ? '' : 'selected'}>${t('opt_dest_details')}</option><option value="world" ${guessWorld(tk) ? 'selected' : ''}>${t('opt_dest_world')}</option></select></div><div class="ifimgen-note" style="margin:-4px 0 8px 24px">${escapeHtml(tk.text)}</div>`).join('');
+                const box = document.createElement('div'); box.className = 'ifimgen-tokens-popup'; box.innerHTML = `<div class="ifimgen-note">${t('note_tokens_popup')}</div>${rows}`;
+                const ok = await ctx.callGenericPopup(box, ctx.POPUP_TYPE.CONFIRM, '', { okButton: t('btn_save'), wide: true, large: true });
+                if (!ok) return;
+                const picked = [...box.querySelectorAll('input[type=checkbox]:checked')].map(c => Number(c.dataset.i));
+                if (!picked.length) return;
+                const add = { facets: [], world: [] };
+                for (const i of picked) { const dest = box.querySelector(`select[data-dest="${i}"]`).value; add[dest].push({ key: mine[i].facet, text: mine[i].text }); }
+                const merge = (cur, extra) => { const out = [...(cur ?? [])]; for (const f of extra) { const j = out.findIndex(x => x.key === f.key); if (j >= 0) out[j] = f; else out.push(f); } return out; };
+                const next = createEntity(kind, { ...saved, facets: merge(saved.facets, add.facets), world: merge(saved.world, add.world) });
+                upsertEntity(list(), next); save(); load(next); refreshList();
+                setStatus(t('st_tokens_saved', { n: picked.length }), 'ok');
+            });
         }
         function read() {
             const base = list().find(e => e.id === currentId);
@@ -657,7 +716,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
             return createEntity(kind, {
                 id: base?.id, profile: base?.profile, name: q('.ent-name').value, keyword: q('.ent-keyword').value || q('.ent-name').value,
                 aliases: q('.ent-aliases').value, tags: q('.ent-tags').value, natural: q('.ent-natural').value,
-                negative: q('.ent-negative').value, facets: q('.ent-facets').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
+                negative: q('.ent-negative').value, facets: q('.ent-facets').value, world: q('.ent-world').value, loras: q('.ent-loras').value, loraPosition: q('.ent-lorapos').value,
                 bind: { always: q('.ent-always').checked, chats: [...bindState.chats], characters: [...bindState.characters], personas: [...bindState.personas] },
             });
         }
@@ -731,6 +790,7 @@ function entityPanel({ kind, tab, label, icon, hint }) {
         <div class="ifimgen-box">
             ${boxTitle(icon, label, '<span class="ifimgen-chip ent-count"></span>')}
             <div class="ifimgen-row"><select class="text_pole ent-select"></select>${btn({ cls: 'ent-new', icon: 'plus', label: t('btn_new') })}</div>
+            <div class="ifimgen-row"><label>${t('lbl_in_use')}</label><div class="ent-inuse ifimgen-note"></div></div>
             <div class="ifimgen-note">${hint}</div>
         </div>
         <div class="ifimgen-box">
@@ -746,6 +806,9 @@ function entityPanel({ kind, tab, label, icon, hint }) {
             <div class="ifimgen-row"><label>${t('lbl_negative')}</label><input class="text_pole ent-negative" type="text"></div>
             <div class="ifimgen-row"><label>${t('lbl_details')}</label><textarea class="text_pole ent-facets" rows="5" placeholder="${escapeHtml(t('ph_details')).replaceAll('\n', '&#10;')}"></textarea></div>
             <div class="ifimgen-note">${t('note_details', { keys: FACET_KEYS.join(', ') })}</div>
+            <div class="ifimgen-row"><label>${t('lbl_world')}</label><textarea class="text_pole ent-world" rows="4" placeholder="${escapeHtml(t('ph_world')).replaceAll('\n', '&#10;')}"></textarea></div>
+            <div class="ifimgen-note">${t('note_world')}</div>
+            <div class="ifimgen-row"><label></label>${btn({ cls: 'ent-tokens-save', icon: 'download', label: t('btn_tokens_save') })}</div>
             <div class="ifimgen-row"><label>${t('lbl_loras')}</label><textarea class="text_pole ent-loras" placeholder="${escapeHtml(t('ph_loras'))}"></textarea></div>
             <div class="ifimgen-row"><label>${t('lbl_lorapos')}</label><select class="text_pole ent-lorapos">${LORA_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}</select></div>
         </div>
@@ -760,7 +823,10 @@ function entityPanel({ kind, tab, label, icon, hint }) {
             <div class="ifimgen-row"><label>${t('lbl_st_personas')}</label>
                 <div class="ifimgen-bind-pick"><select class="text_pole ent-bind-persona-select"></select>${btn({ cls: 'ent-bind-persona-add', icon: 'plus', title: t('btn_add_persona') })}</div></div>
             <div class="ifimgen-row"><label></label><div class="ifimgen-list ent-bind-personas"></div></div>
+            <div class="ifimgen-row"><label></label><div class="ifimgen-list ent-bind-versions" style="display:none"></div></div>
+            <div class="ifimgen-row"><label></label>${btn({ cls: 'ent-bind-activate', icon: 'plug', label: t('btn_make_active') })}</div>
             <div class="ifimgen-row"><label class="checkbox_label"><input type="checkbox" class="ent-always"> ${t('lbl_always')}</label></div>
+            <div class="ifimgen-note">${t('note_always')}</div>
         </div>
         <div class="ifimgen-box">
             ${boxTitle('image', t('box_profile'))}
