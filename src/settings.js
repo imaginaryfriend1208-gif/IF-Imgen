@@ -48,6 +48,7 @@ export function defaultSettings() {
             imagesPerResponse: 1,       // N
             contextMessages: 4,         // K previous messages given to the scene planner
             sceneHistory: 3,            // scene documents of earlier replies handed to the scene planner (continuity)
+            ledgerLimit: 40,            // chat tokens (ad-hoc tokens defined by earlier scene documents) handed to the LLM steps: newest N, 0 = all
             presetId: BUILTIN_PRESETS[0].id,
             autoAspect: false,
             dialect: 'tags',            // 'tags' | 'natural'

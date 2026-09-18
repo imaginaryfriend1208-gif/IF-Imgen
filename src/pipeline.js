@@ -9,6 +9,7 @@
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, isTruncatedReply, findPreset, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
+import { mergeLedger, ledgerTokens, ledgerBlock, removeLedgerToken, markLedgerSaved, bootstrapLedger } from './ledger.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined, parseDocTokens } from './scene.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft } from './profile.js';
@@ -128,6 +129,19 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         }
         return out;
     }
+    // ---- chat token ledger (chat_metadata.ifimgen_tokens): every ad-hoc token the planner defined in this chat.
+    const saveMeta = ctx => { try { (ctx.saveMetadataDebounced ?? ctx.saveMetadata)?.(); } catch { /* not available (tests) */ } };
+    /** Tokens of this chat handed to the LLM steps: the newest N (settings.generate.ledgerLimit, 0 = all); tokens defined
+     *  by documents AFTER `beforeId` are left out so a regenerate of an old message does not see the future. */
+    function chatLedger(ctx, beforeId = Infinity) {
+        bootstrapLedger(ctx, sceneDocOf);
+        const lim = Number(settings.generate.ledgerLimit ?? 40);
+        return ledgerTokens(ctx, 0).filter(tk => tk.at <= beforeId).slice(0, lim > 0 ? lim : undefined);
+    }
+    function recordDocTokens(ctx, messageId, doc) {
+        if (mergeLedger(ctx, parseDocTokens(doc), messageId) > 0) { saveMeta(ctx); onChange?.(messageId); }
+    }
+
     /** Refusal / empty-output check shared by the LLM steps. */
     function llmFailure(reply, what) {
         const head = String(reply ?? '').replace(/\s+/g, ' ').trim().slice(0, 220);
@@ -162,6 +176,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             system: g.sceneSystem, paragraphs, context,
             previous: previousSceneDocs(ctx, messageId, clamp(g.sceneHistory ?? 3, 0, 10)),
             characters: ents.characters, personas: ents.personas,
+            ledger: ledgerBlock(chatLedger(ctx, messageId)),
         });
         const reply = await llm.chat({ ...msgs, signal });
         const doc = String(reply ?? '').trim();
@@ -181,6 +196,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         status('writing scene document…');
         const doc = await writeSceneDoc(ctx, messageId, { paragraphs: paras, context: contextText(ctx, messageId, settings.generate.contextMessages) }, signal);
         setSceneDoc(msg, doc);
+        recordDocTokens(ctx, messageId, doc);
         log(`#${messageId} scene document`, doc);
         return doc;
     }
@@ -193,7 +209,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const text = String(doc ?? '');
         if (!text.includes('$')) return text;
         const ents = resolveEntities(settings, { text, ...chatIdentity(ctx) });
-        const ex = expandSceneDoc({ doc: text, characters: ents.characters, personas: ents.personas });
+        const ex = expandSceneDoc({ doc: text, characters: ents.characters, personas: ents.personas, adhoc: chatLedger(ctx) });
         if (ex.unknown.length) log('scene document: unresolved tokens kept as written:', ex.unknown);
         return ex.text;
     }
@@ -235,7 +251,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const ident = chatIdentity(ctx);
         // Entities are resolved on the union of all scenes so every image carries the same cast.
         const ents = resolveEntities(settings, { text: scenes.join('\n'), ...ident });
-        const adhoc = parseDocTokens(setting);
+        // Ad-hoc tokens: this document's TOKENS first, then the chat ledger (tokens defined by earlier documents).
+        const adhoc = [...parseDocTokens(setting), ...chatLedger(ctx)];
         const shots = scenes.map(scene => expandScene({ scene, characters: ents.characters, personas: ents.personas, adhoc }));
         for (const ex of shots) if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
         const dialect = effectiveDialect(settings);
@@ -822,6 +839,10 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         sceneDocTokens: messageId => parseDocTokens(sceneDocOf(getContext().chat[messageId])),
         /** Ad-hoc tokens of EVERY scene document in the chat, newest definition of each $kw.key wins (+ the message it came from).
          *  The latest document often has an empty TOKENS section (nothing new that reply) - tokens defined earlier must stay saveable. */
+        /** Chat token ledger for the UI: list (newest first), remove one, mark one as saved into an entry. */
+        ledger: () => { const ctx = getContext(); bootstrapLedger(ctx, sceneDocOf); return ledgerTokens(ctx, 0); },
+        ledgerRemove(id) { const ctx = getContext(); if (removeLedgerToken(ctx, id)) saveMeta(ctx); },
+        ledgerMarkSaved(id) { const ctx = getContext(); if (markLedgerSaved(ctx, id)) saveMeta(ctx); },
         sceneDocTokensAll() {
             const chat = getContext().chat ?? [];
             const seen = new Map();

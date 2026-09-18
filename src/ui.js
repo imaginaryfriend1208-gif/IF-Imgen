@@ -10,6 +10,7 @@ import { mountGallery, galleryMarkup } from './gallery.js';
 import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 import { PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from './profile.js';
 import { t, setLang, getLang, LANGS, FLAGS } from './i18n.js';
+import { ledgerBoxHtml, mountLedger } from './ledgerui.js';
 
 /** Set the state class of a status node (ok / error / warn / '') without touching its marker classes (ent-status, ent-profile-status). */
 function setStatusClass(n, cls) { n.classList.remove('ok', 'error', 'warn'); if (cls) n.classList.add(...String(cls).split(/\s+/).filter(Boolean)); }
@@ -303,6 +304,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_count', () => g.imagesPerResponse, v => g.imagesPerResponse = v);
     bind('ifimgen_ctx', () => g.contextMessages, v => g.contextMessages = v);
     bind('ifimgen_scene_hist', () => g.sceneHistory, v => g.sceneHistory = v);
+    bind('ifimgen_ledger_limit', () => g.ledgerLimit ?? 40, v => g.ledgerLimit = v);
     bind('ifimgen_dialect', () => g.dialect, v => { g.dialect = v; naturalWarn(); });
     bind('ifimgen_auto_aspect', () => g.autoAspect === true, v => g.autoAspect = v);
     const showMode = () => root.querySelectorAll('[data-mode]').forEach(b => b.style.display = b.dataset.mode === g.mode ? '' : 'none');
@@ -468,6 +470,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         } catch (e) { status('ifimgen_gen_status', e.message, 'error'); }
     };
     $('ifimgen_regen_last').addEventListener('click', () => regenLast(false));
+    const ledger = mountLedger({ root, settings, save, pipeline, status: (text, cls) => status('ifimgen_ledger_status', text, cls), onEntitiesChanged: () => { refreshEntities(); naturalWarn(); } });
     $('ifimgen_regen_scene_last').addEventListener('click', () => regenLast(true));
 
     // ---- job strip: reflects every image job (auto, per-message button, slash, regen, tests); Cancel aborts them all.
@@ -778,7 +781,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     const gallery = mountGallery({ panel: root.querySelector('[data-panel="gallery"]'), getContext, viewer, pipeline });
 
     showTab(openTab);
-    return { refresh() { fillModels(); fillPresets(); naturalWarn(); gallery.refresh(); }, refreshGallery: () => gallery.refresh(), refreshEntities: () => { refreshEntities(); naturalWarn(); }, showTab };
+    return { refresh() { fillModels(); fillPresets(); naturalWarn(); gallery.refresh(); ledger.refresh(); }, refreshLedger: () => ledger.refresh(), refreshGallery: () => gallery.refresh(), refreshEntities: () => { refreshEntities(); naturalWarn(); }, showTab };
 }
 
 function fillSelect(sel, items, value, emptyLabel = null) {
@@ -960,7 +963,7 @@ function generatePanel() {
             <div class="ifimgen-row"><label for="ifimgen_align">${t('lbl_align')}</label><select id="ifimgen_align" class="text_pole"><option value="left">${t('opt_align_left')}</option><option value="center">${t('opt_align_center')}</option><option value="right">${t('opt_align_right')}</option></select></div>
             <div class="ifimgen-grid2">
                 ${numRow('ifimgen_count', t('lbl_count'), 1, 8)}${numRow('ifimgen_ctx', t('lbl_ctx'), 0, 20)}
-                ${numRow('ifimgen_scene_hist', t('lbl_scene_hist'), 0, 10)}${numRow('ifimgen_minchars', t('lbl_minchars'), 0, 500)}
+                ${numRow('ifimgen_scene_hist', t('lbl_scene_hist'), 0, 10)}${numRow('ifimgen_minchars', t('lbl_minchars'), 0, 500)}${numRow('ifimgen_ledger_limit', t('lbl_ledger_limit'), 0, 500)}
                 <div class="ifimgen-row"><label for="ifimgen_dialect">${t('lbl_dialect')}</label><select id="ifimgen_dialect" class="text_pole"><option value="tags">${t('opt_tags')}</option><option value="natural">${t('opt_natural')}</option></select></div>
                 <div class="ifimgen-row"><label for="ifimgen_auto_aspect">${t('lbl_auto_aspect')}</label><input type="checkbox" id="ifimgen_auto_aspect"></div>
             </div>
@@ -1007,6 +1010,7 @@ function generatePanel() {
             <h4>${t('h_overrides')}</h4>
             <div class="ifimgen-grid2">${numRow('ifimgen_ov_steps', t('lbl_steps'), 0, 150)}${numRow('ifimgen_ov_cfg', t('lbl_cfg'), 0, 30, 0.5)}${numRow('ifimgen_ov_width', t('lbl_width'), 0, 2048, 64)}${numRow('ifimgen_ov_height', t('lbl_height'), 0, 2048, 64)}</div>
         </div>
+        ${ledgerBoxHtml({ boxTitle, btn })}
         <div class="ifimgen-box">
             ${boxTitle('locate', t('box_preview'))}
             <textarea id="ifimgen_preview_scene" class="text_pole ifimgen-preview-scene" rows="4" placeholder="${escapeHtml(t('ph_preview'))}"></textarea>
