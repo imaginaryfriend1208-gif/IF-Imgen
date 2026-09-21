@@ -9,7 +9,8 @@
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, isTruncatedReply, findPreset, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
-import { ledgerTokens, ledgerBlock, hideLedgerToken, unhideAll, hiddenCount, markLedgerSaved } from './ledger.js';
+import { ledgerTokens, ledgerBlock } from './ledger.js';
+import { sceneSystemText } from './settings.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined, parseDocTokens } from './scene.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft } from './profile.js';
@@ -171,7 +172,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const ident = chatIdentity(ctx);
         const ents = resolveEntities(settings, { text: paragraphs.map(p => p.text).join('\n'), ...ident });
         const msgs = buildScenePrompt({
-            system: g.sceneSystem, rules: g.sceneRules, paragraphs, context,
+            system: sceneSystemText(g), rules: g.sceneRules, paragraphs, context,
             previous: previousSceneDocs(ctx, messageId, clamp(g.sceneHistory ?? 3, 0, 10)),
             characters: ents.characters, personas: ents.personas,
             ledger: ledgerBlock(chatLedger(ctx, messageId)),
@@ -442,7 +443,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
      * is used as the prompt draft as-is; `final` is a finished prompt used instead of the smooth version; `keepPrompt`
      * redraws the stored draft + final without any LLM call. Entities / style / settings are re-applied at compile time.
      */
-    async function regenerate(messageId, url, { scene, final: finalText, onStatus, keepPrompt = false } = {}) {
+    async function regenerate(messageId, url, { scene, final: finalText, onStatus, keepPrompt = false, noRefine = false } = {}) {
         const ctx = getContext();
         const msg = ctx.chat[messageId];
         if (!msg) throw new Error('Message not found.');
@@ -476,7 +477,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if (!useScene) { useScene = String(rec?.scene ?? '').trim() || String(rec?.prompt ?? '').trim(); useFinal = String(rec?.final ?? '').trim(); }
             if (!useScene) throw new Error('No stored prompt for this image — edit the draft and redraw.');
             // A user-typed final prompt is sent as written: the refine step must not rewrite it.
-            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal, noRefine: Boolean(editedFinal) }, controller.signal, status);
+            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal, noRefine: noRefine || Boolean(editedFinal) }, controller.signal, status);
             tm.lap(settings.generate.mode === 'refine' ? 'refine+image' : 'image');
             if (rec) fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
             const list = records(msg);
@@ -850,12 +851,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         sceneDocTokens: messageId => parseDocTokens(sceneDocOf(getContext().chat[messageId])),
         /** Ad-hoc tokens of EVERY scene document in the chat, newest definition of each $kw.key wins (+ the message it came from).
          *  The latest document often has an empty TOKENS section (nothing new that reply) - tokens defined earlier must stay saveable. */
-        /** Chat token ledger for the UI: list (newest first), remove one, mark one as saved into an entry. */
+        /** Chat token ledger (floater list): every ad-hoc token of this chat's scene documents, newest first. */
         ledger: () => ledgerTokens(getContext(), sceneDocOf),
-        ledgerHidden: () => hiddenCount(getContext()),
-        ledgerRemove(id) { const ctx = getContext(); hideLedgerToken(ctx, id); saveMeta(ctx); },
-        ledgerUnhideAll() { const ctx = getContext(); unhideAll(ctx); saveMeta(ctx); },
-        ledgerMarkSaved(id, text) { const ctx = getContext(); markLedgerSaved(ctx, id, text); saveMeta(ctx); },
         sceneDocTokensAll() {
             const chat = getContext().chat ?? [];
             const seen = new Map();

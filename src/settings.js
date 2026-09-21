@@ -4,7 +4,7 @@ import { DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 import { DEFAULT_PROFILE_SYSTEM } from './profile.js';
 
 export const MODULE = 'IF_Imgen';
-export const SETTINGS_VERSION = 5;
+export const SETTINGS_VERSION = 6;
 
 /** Per-model generation parameters (one profile per model, per backend). */
 export const PARAM_KEYS = ['sampler', 'scheduler', 'steps', 'cfg', 'width', 'height'];
@@ -54,7 +54,8 @@ export function defaultSettings() {
             dialect: 'tags',            // 'tags' | 'natural'
             // Calls per reply: 'plan' = 2 (scene document + translate to prompts) | 'refine' = 3 (+ ONE batch refine for all images)
             mode: 'plan',
-            sceneSystem: DEFAULT_SCENE_SYSTEM,
+            scenePrompts: [],           // user variants of the step-1 system prompt [{ id, name, text }] (Generate -> LLM prompts)
+            scenePromptId: '',          // selected variant; '' = the built-in DEFAULT_SCENE_SYSTEM (updated with the extension)
             sceneRules: '',             // the user's own short rules for the scene document, appended to sceneSystem (survive a default-prompt update)
             refineSystem: DEFAULT_REFINE_SYSTEM,
             profileSystem: DEFAULT_PROFILE_SYSTEM, // ONE call: entity data -> portrait prompt (Characters / Personas -> Profile image)
@@ -132,6 +133,21 @@ export function migrate(s) {
     if (from < 4 && s.connection?.llm && Number(s.connection.llm.maxTokens) < 6000) s.connection.llm.maxTokens = 8000;
     // v5 (0.12.13): the "final" carries every base look in full -> 4 shots x 2 versions no longer fit in 8000.
     if (from < 5 && s.connection?.llm && Number(s.connection.llm.maxTokens) < 12000) s.connection.llm.maxTokens = 12000;
+    // v6 (0.14.2): the step-1 system prompt is the built-in default or one of the user's saved variants. A stored
+    // sceneSystem that is neither the old nor the new default is kept as the variant "Imported (my edit)" and stays
+    // selected, so an existing override keeps working; the untouched old default is dropped in favour of the new one.
+    if (from < 6 && s.generate) {
+        const g = s.generate;
+        const old = typeof g.sceneSystem === 'string' ? g.sceneSystem.trim() : '';
+        const isOldDefault = old.includes('TOKENS: the CAST lists each known person as $keyword and each stored entry');
+        if (!Array.isArray(g.scenePrompts)) g.scenePrompts = [];
+        if (typeof g.scenePromptId !== 'string') g.scenePromptId = '';
+        if (old && !isOldDefault && old !== DEFAULT_SCENE_SYSTEM.trim()) {
+            const p = { id: `imported-${Date.now()}`, name: 'Imported (my edit)', text: g.sceneSystem };
+            g.scenePrompts.push(p); g.scenePromptId = p.id;
+        }
+        delete g.sceneSystem;
+    }
     s.version = SETTINGS_VERSION;
     return s;
 }
@@ -151,4 +167,9 @@ export function ensureSettings(extensionSettings) {
         s.defaultStyleId = (styles.find(x => x.bind?.always) ?? styles[0]).id;
     }
     return s;
+}
+
+/** Effective step-1 system prompt: the selected user variant (settings.generate.scenePrompts), else the built-in default. */
+export function sceneSystemText(g) {
+    return (g?.scenePrompts ?? []).find(p => p.id === g?.scenePromptId)?.text || DEFAULT_SCENE_SYSTEM;
 }

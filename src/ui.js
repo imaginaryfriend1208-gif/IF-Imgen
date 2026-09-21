@@ -10,6 +10,7 @@ import { mountGallery, galleryMarkup } from './gallery.js';
 import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 import { PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from './profile.js';
 import { t, setLang, getLang, LANGS, FLAGS } from './i18n.js';
+import { sceneSystemText } from './settings.js';
 
 /** Set the state class of a status node (ok / error / warn / '') without touching its marker classes (ent-status, ent-profile-status). */
 function setStatusClass(n, cls) { n.classList.remove('ok', 'error', 'warn'); if (cls) n.classList.add(...String(cls).split(/\s+/).filter(Boolean)); }
@@ -308,9 +309,33 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     bind('ifimgen_auto_aspect', () => g.autoAspect === true, v => g.autoAspect = v);
     const showMode = () => root.querySelectorAll('[data-mode]').forEach(b => b.style.display = b.dataset.mode === g.mode ? '' : 'none');
     bind('ifimgen_mode', () => g.mode, v => { g.mode = v; showMode(); });
-    bind('ifimgen_scene_system', () => g.sceneSystem, v => g.sceneSystem = v);
     bind('ifimgen_scene_rules', () => g.sceneRules ?? '', v => g.sceneRules = v);
-    $('ifimgen_scene_reset').addEventListener('click', () => { g.sceneSystem = DEFAULT_SCENE_SYSTEM; $('ifimgen_scene_system').value = g.sceneSystem; save(); });
+    // Step-1 system prompt: the built-in default or one of the user's saved variants (g.scenePrompts). The default
+    // itself is read-only (it ships with updates): edit it and press + to keep the edit as a variant.
+    const sceneSel = $('ifimgen_scene_prompt'), sceneTa = $('ifimgen_scene_system'), sceneNote = $('ifimgen_scene_prompt_note');
+    const scenePrompts = () => { if (!Array.isArray(g.scenePrompts)) g.scenePrompts = []; return g.scenePrompts; };
+    const sceneCur = () => scenePrompts().find(p => p.id === g.scenePromptId) ?? null;
+    function fillScenePrompts() {
+        const cur = sceneCur();
+        sceneSel.innerHTML = [`<option value="">${t('opt_scene_default')}</option>`, ...scenePrompts().map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`)].join('');
+        sceneSel.value = cur ? cur.id : '';
+        sceneTa.value = sceneSystemText(g);
+        $('ifimgen_scene_save').disabled = !cur; $('ifimgen_scene_delete').disabled = !cur;
+        sceneNote.textContent = cur ? t('note_scene_user', { name: cur.name }) : t('note_scene_default');
+    }
+    sceneSel.addEventListener('change', () => { g.scenePromptId = sceneSel.value; save(); fillScenePrompts(); });
+    sceneTa.addEventListener('input', () => { sceneNote.textContent = sceneCur() ? t('note_scene_user_dirty') : t('note_scene_default_dirty'); });
+    $('ifimgen_scene_save').addEventListener('click', () => { const cur = sceneCur(); if (!cur) return; cur.text = sceneTa.value; save(); fillScenePrompts(); status('ifimgen_gen_status', t('st_scene_saved', { name: cur.name }), 'ok'); });
+    $('ifimgen_scene_saveas').addEventListener('click', async () => {
+        const name = await askPresetName(sceneCur() ? `${sceneCur().name} 2` : t('ph_scene_prompt_name'));
+        if (typeof name !== 'string' || !name.trim()) return;
+        const p = { id: (globalThis.crypto?.randomUUID?.() ?? `sp-${Date.now()}`), name: name.trim(), text: sceneTa.value };
+        scenePrompts().push(p); g.scenePromptId = p.id; save(); fillScenePrompts();
+        status('ifimgen_gen_status', t('st_scene_saved', { name: p.name }), 'ok');
+    });
+    $('ifimgen_scene_delete').addEventListener('click', () => { const cur = sceneCur(); if (!cur) return; g.scenePrompts = scenePrompts().filter(p => p.id !== cur.id); g.scenePromptId = ''; save(); fillScenePrompts(); });
+    $('ifimgen_scene_reset').addEventListener('click', () => { sceneTa.value = DEFAULT_SCENE_SYSTEM; sceneTa.dispatchEvent(new Event('input')); });
+    fillScenePrompts();
     bind('ifimgen_refine_system', () => g.refineSystem, v => g.refineSystem = v);
     $('ifimgen_refine_reset').addEventListener('click', () => { g.refineSystem = DEFAULT_REFINE_SYSTEM; $('ifimgen_refine_system').value = g.refineSystem; save(); });
     bind('ifimgen_profile_system', () => g.profileSystem, v => g.profileSystem = v);
@@ -976,8 +1001,9 @@ function generatePanel() {
                     <option value="plan">${t('opt_mode_plan')}</option>
                     <option value="refine">${t('opt_mode_refine')}</option>
                 </select></div>
-            <div class="ifimgen-row"><label>${t('lbl_scene_system')}</label>${btn({ id: 'ifimgen_scene_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
+            <div class="ifimgen-row"><label>${t('lbl_scene_system')}</label><select id="ifimgen_scene_prompt" class="text_pole" style="flex:1;min-width:0;max-width:20em"></select>${btn({ id: 'ifimgen_scene_save', icon: 'save', title: t('btn_scene_save') })}${btn({ id: 'ifimgen_scene_saveas', icon: 'plus', title: t('btn_scene_saveas') })}${btn({ id: 'ifimgen_scene_delete', cls: 'danger', icon: 'trash', title: t('btn_scene_delete') })}${btn({ id: 'ifimgen_scene_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
             <textarea id="ifimgen_scene_system" class="text_pole" rows="7"></textarea>
+            <div class="ifimgen-note" id="ifimgen_scene_prompt_note"></div>
             <div class="ifimgen-note">${t('note_scene')}</div>
             <div class="ifimgen-row"><label>${t('lbl_scene_rules')}</label></div>
             <textarea id="ifimgen_scene_rules" class="text_pole" rows="4" placeholder="${escapeHtml(t('ph_scene_rules'))}"></textarea>

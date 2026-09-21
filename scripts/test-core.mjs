@@ -6,7 +6,7 @@ import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stri
 import { parsePlan, renderPlannerPrompt, BUILTIN_PRESETS, allPresets, findPreset, overwritePreset, resetPreset, createPreset, extractJsonArray, presetDialect, effectiveDialect } from '../src/presets.js';
 import { createEntity, matchByKeyword, resolveEntities, importEntities, exportEntities } from '../src/entities.js';
 import { compilePrompt, effectiveParams, modelParams, hasProfile, softenTags, modelPromptPrefs } from '../src/prompt.js';
-import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION } from '../src/settings.js';
+import { defaultSettings, ensureSettings, PARAM_DEFAULTS, SETTINGS_VERSION, sceneSystemText } from '../src/settings.js';
 import { collectChatImages, collectProfileImages } from '../src/gallery.js';
 import { compareVersions } from '../src/util.js';
 import { abortable, createPipeline } from '../src/pipeline.js';
@@ -300,7 +300,7 @@ test('step 1 (scene document): sections, cast details, previous documents (oldes
     const st = buildScenePrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka], previous: [{ id: 3, text: 'DOC A' }, { id: 7, text: 'DOC B' }] });
     for (const k of ['SCENE:', 'LOCATION:', 'LAYOUT:', 'PEOPLE PRESENT:', 'WEARING:', 'EXPRESSION:', 'DOING:', 'POSE / POSITION:', 'CONTINUITY:']) assert.ok(st.system.includes(k), `section ${k}`);
     assert.ok(st.system.includes('colour') && st.system.includes('WHERE it is'), 'clothing colours + prop placement demanded');
-    assert.ok(st.system.includes('TOKENS:') && st.system.includes('$keyword.entry') && st.system.includes('NEW TOKENS'), 'planner is told to write tokens and define new ones');
+    assert.ok(st.system.includes('TOKENS:') && st.system.includes('$<person>.<key>') && st.system.includes('$world.<key>') && st.system.includes('Defining a token'), 'planner is told to write tokens and define new ones');
     assert.ok(st.user.includes('$yenka.outfit: white button-up shirt') && st.user.includes('token $rosario') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
     // Stored document keeps tokens; the downstream LLMs get words. Unknown tokens are kept, not dropped.
     const doc = 'PEOPLE PRESENT: 2 - $yenka, $rosario\n- $yenka\n  WEARING: $yenka.outfit, unbuttoned\n  POSE: back to viewer showing $yenka.back\n- $rosario\n  WEARING: $rosario.armor, dented';
@@ -318,14 +318,19 @@ test('step 1 (scene document): sections, cast details, previous documents (oldes
     const withRules = buildScenePrompt({ paragraphs: [], characters: [], personas: [], rules: 'Output fully in English.' });
     assert.ok(withRules.system.startsWith(DEFAULT_SCENE_SYSTEM) && withRules.system.includes('ADDITIONAL RULES FROM THE USER') && withRules.system.endsWith('Output fully in English.'));
     assert.ok(!buildScenePrompt({ paragraphs: [], characters: [], personas: [], rules: '  ' }).system.includes('ADDITIONAL RULES'));
-    assert.equal(defaultSettings().generate.sceneSystem, DEFAULT_SCENE_SYSTEM);
+    assert.equal(defaultSettings().generate.sceneSystem, undefined); assert.equal(sceneSystemText(defaultSettings().generate), DEFAULT_SCENE_SYSTEM);
     assert.equal(defaultSettings().generate.sceneHistory, 3);
     // v2 install: old scene-setting prompt dropped, refine system written against "SCENE SETTING" replaced, custom one kept
     const v2 = { IF_Imgen: { version: 2, generate: { settingSystem: 'old setting prompt', refineSystem: 'x SCENE SETTING y {{count}}' } } };
     const m = ensureSettings(v2);
     assert.equal(m.version, SETTINGS_VERSION); assert.equal(m.generate.settingSystem, undefined);
     assert.equal(m.generate.refineSystem, defaultSettings().generate.refineSystem, 'v2 refine prompt (SCENE SETTING contract) replaced');
-    assert.equal(m.generate.sceneSystem, DEFAULT_SCENE_SYSTEM, 'new step-1 prompt filled in');
+    assert.equal(sceneSystemText(m.generate), DEFAULT_SCENE_SYSTEM, 'new step-1 prompt in use');
+    // v6: a user-edited sceneSystem survives as the selected variant; the untouched old default is dropped
+    const edited = ensureSettings({ IF_Imgen: { ...defaultSettings(), version: 5, generate: { ...defaultSettings().generate, sceneSystem: 'MY OWN PROMPT' } } }).generate;
+    assert.equal(edited.sceneSystem, undefined); assert.equal(edited.scenePrompts.length, 1); assert.equal(edited.scenePrompts[0].text, 'MY OWN PROMPT'); assert.equal(sceneSystemText(edited), 'MY OWN PROMPT');
+    const oldDef = ensureSettings({ IF_Imgen: { ...defaultSettings(), version: 5, generate: { ...defaultSettings().generate, sceneSystem: 'x TOKENS: the CAST lists each known person as $keyword and each stored entry y' } } }).generate;
+    assert.equal(oldDef.scenePrompts.length, 0); assert.equal(sceneSystemText(oldDef), DEFAULT_SCENE_SYSTEM);
     const keep = ensureSettings({ IF_Imgen: { version: 2, generate: { refineSystem: 'mine {{count}}' } } });
     assert.equal(keep.generate.refineSystem, 'mine {{count}}');
 });

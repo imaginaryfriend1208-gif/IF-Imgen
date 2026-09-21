@@ -157,7 +157,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         async function regen(it, o = {}) {
             if (it.profile) return applyFresh(it, await pipeline.profileImage({ kind: it.profile.kind, id: it.profile.id, draft: o.text, onStatus }));
             if (it.test) return applyFresh(it, await pipeline.regenerateTest(it.url, { prompt: o.text, onStatus }));
-            return applyFresh(it, await pipeline.regenerate(it.messageId, it.url, { scene: o.scene, final: o.final, keepPrompt: o.redraw === true, onStatus }));
+            return applyFresh(it, await pipeline.regenerate(it.messageId, it.url, { scene: o.scene, final: o.final, keepPrompt: o.redraw === true, noRefine: o.tokensOnly === true, onStatus }));
         }
         /** Whole-message job (regen scene / save + regenerate): every slot of that message is refreshed from the records. */
         async function refreshMessage(it, r) {
@@ -168,7 +168,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             show(); onChanged();
         }
 
-        box.addEventListener('click', e => { if (e.target === box && !busy) close(); });
+        // No close on backdrop click: on desktop the panel is wide and a stray click next to it kept dismissing the viewer. Close = X / Esc.
         tabsEl.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (!b || busy) return; tab = b.dataset.tab; showTab(); });
         bar.addEventListener('click', async e => {
             const b = e.target.closest('.ifimgen-btn'); if (!b) return;
@@ -179,7 +179,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             if (b.classList.contains('lb-open')) return downloadUrl(it.url);
             if (b.classList.contains('lb-jump')) { close(); return jumpTo(it.messageId); }
             if (b.classList.contains('lb-copy')) { try { await navigator.clipboard.writeText(editorText() || body.textContent || ''); setStatus(t('vw_copied'), 'ok'); } catch { setStatus(t('vw_copy_failed'), 'error'); } return; }
-            if (b.classList.contains('lb-apply')) { const text = editorText(); if (!text) return setStatus(t('vw_empty'), 'error'); return job(() => regen(it, { text, scene: text })); }
+            if (b.classList.contains('lb-apply')) { const text = editorText(); if (!text) return setStatus(t('vw_empty'), 'error'); return job(() => regen(it, { text, scene: text, tokensOnly: true })); }
             if (b.classList.contains('lb-apply-final')) { const text = editorText(); if (!text) return setStatus(t('vw_empty'), 'error'); return job(() => regen(it, { final: text })); }
             if (b.classList.contains('lb-rewrite')) return job(() => regen(it, {}));
             if (b.classList.contains('lb-redraw')) return job(() => regen(it, { redraw: true }));
