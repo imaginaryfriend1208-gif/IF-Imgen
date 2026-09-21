@@ -2,7 +2,18 @@
 // Paragraph-aware image generation: planner LLM picks paragraphs of the latest
 // reply, compiler attaches bound character/persona/style fragments, backend
 // renders, image is inserted right after that paragraph.
-import { getContext, extension_settings } from '../../../extensions.js';
+import { getContext as stGetContext, extension_settings } from '../../../extensions.js';
+// Avatar filename of the ACTIVE persona. ST's getContext() does not expose it (power_user has no persona_avatar
+// either), so every persona binding by avatar silently failed: the persona was dropped from the cast / roster, its
+// $tokens went unresolved and the step-2 LLM described "a woman with dark hair" instead. Live binding from ST.
+import { user_avatar } from '../../../personas.js';
+
+/** ST context + `userAvatar` (active persona avatar filename) read by chatIdentity() in the pipeline and the UI. */
+function getContext() {
+    const ctx = stGetContext();
+    try { ctx.userAvatar = String(user_avatar ?? ''); } catch { /* keep going without persona binding */ }
+    return ctx;
+}
 import { saveSettingsDebounced, eventSource, event_types, getRequestHeaders } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 
@@ -16,7 +27,7 @@ import { t, setLang } from './src/i18n.js';
 import { compareVersions } from './src/util.js';
 import { countImages, stripImagesLoose, IMG_MARK } from './src/paragraphs.js';
 
-const VERSION = '0.13.2';
+const VERSION = '0.14.0';
 const REPO_URL = 'https://github.com/imaginaryfriend1208-gif/IF-Imgen';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/imaginaryfriend1208-gif/IF-Imgen/main/manifest.json';
 // Direct message: Discord only links profiles by numeric user id (username diuenmii). Opens the profile -> Message.

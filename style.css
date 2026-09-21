@@ -116,8 +116,22 @@
 .ifimgen-thumb:hover { border-color: var(--ifg-accent); }
 .ifimgen-thumb figcaption { position: absolute; left: 0; right: 0; bottom: 0; font-size: .7em; padding: 1px 5px; background: rgba(0, 0, 0, .65); color: #fff; }
 .ifimgen-lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .9); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
-.ifimgen-lightbox img { max-width: 95vw; max-height: 76vh; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 40px rgba(0, 0, 0, .6); }
-.ifimgen-lightbox-cap { max-width: 90vw; max-height: 12vh; overflow: auto; font-size: .85em; color: #ddd; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; box-sizing: border-box; }
+/* viewer layout: image row on top (prev / image / next), version strip, then a reader panel with tabs + one action row */
+.ifimgen-lb-top { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 0; flex: 0 1 auto; }
+.ifimgen-lb-top > img { max-width: min(92vw, 1200px); max-height: 48vh; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 40px rgba(0, 0, 0, .6); }
+.ifimgen-lb-panel { width: min(96vw, 1100px); display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: rgba(20, 22, 30, .92); border: 1px solid rgba(255, 255, 255, .12); color: #ddd; font-size: .88em; box-sizing: border-box; }
+.ifimgen-lb-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ifimgen-lb-title { opacity: .85; font-size: .95em; }
+.ifimgen-lb-tabs { display: inline-flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+.ifimgen-lb-tab { border: 1px solid rgba(255, 255, 255, .22); background: rgba(255, 255, 255, .06); color: #ddd; border-radius: 6px 6px 0 0; padding: 4px 10px; font: inherit; font-size: .9em; cursor: pointer; }
+.ifimgen-lb-tab i { font-style: normal; opacity: .5; }
+.ifimgen-lb-tab.active { background: var(--ifg-accent, #7aa2f7); border-color: var(--ifg-accent, #7aa2f7); color: #fff; }
+.ifimgen-lb-tab:disabled { opacity: .5; cursor: default; }
+.ifimgen-lb-body { display: flex; flex-direction: column; gap: 4px; }
+.ifimgen-lb-body .ifimgen-note { font-size: .9em; opacity: .75; }
+.ifimgen-lb-text { width: 100%; box-sizing: border-box; min-height: 7em; max-height: 30vh; overflow: auto; resize: vertical; margin: 0; padding: 8px 10px; font: inherit; font-size: .95em; line-height: 1.4; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; color: #eee; background: rgba(0, 0, 0, .35); border: 1px solid rgba(255, 255, 255, .15); border-radius: 6px; }
+textarea.ifimgen-lb-text { color: #eee; }
+pre.ifimgen-lb-text { user-select: text; }
 .ifimgen-lightbox-bar { display: flex; gap: 6px; }
 .ifimgen-lightbox .ifimgen-btn { background: rgba(255, 255, 255, .12); color: #fff; border-color: rgba(255, 255, 255, .3); }
 #chat .mes.ifimgen-flash { outline: 2px solid var(--SmartThemeQuoteColor, #7aa2f7); outline-offset: -2px; transition: outline-color 1.2s; }
@@ -142,16 +156,8 @@ body.ifimgen-align-right .ifimgen-fold { text-align: right; }
     .ifimgen-preview-result { grid-template-columns: 1fr; }
 }
 
-/* ---- viewer captions */
-.ifimgen-lightbox-cap { text-align: left; line-height: 1.35; }
-.ifimgen-lightbox-cap > div { margin-top: 4px; }
+/* ---- viewer: shared bits */
 .ifimgen-cap-k { display: inline-block; font-size: .75em; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin-right: 6px; border: 1px solid rgba(255,255,255,.3); border-radius: 4px; padding: 0 4px; }
-/* scene document of the message (step 1): folded to its first line, click to read the whole text */
-.ifimgen-cap-doc { margin-top: 4px; }
-.ifimgen-cap-doc summary { cursor: pointer; list-style: none; opacity: .85; }
-.ifimgen-cap-doc summary::-webkit-details-marker { display: none; }
-.ifimgen-cap-doc[open] summary { opacity: 1; }
-.ifimgen-cap-doc pre { white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; margin: 4px 0 0; padding: 6px 8px; max-height: 30vh; overflow: auto; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; text-align: left; }
 .ifimgen-lightbox-status { min-height: 1.2em; color: #ccc; }
 .ifimgen-lightbox-bar { flex-wrap: wrap; justify-content: center; }
 .mes_text img[alt="IF Imgen"] { cursor: zoom-in; }
@@ -227,8 +233,10 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
         height: 100dvh; width: 100vw;
         padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(14px + env(safe-area-inset-bottom, 0px));
     }
-    .ifimgen-lightbox img { max-width: 100%; max-height: 52dvh; width: auto; height: auto; flex: 0 0 auto; }
-    .ifimgen-lightbox-cap { width: 100%; max-width: 100%; max-height: none; overflow: visible; font-size: .8em; flex: 0 0 auto; }
+    .ifimgen-lb-top { gap: 4px; }
+    .ifimgen-lb-top > img { max-width: calc(100vw - 100px); max-height: 42dvh; width: auto; height: auto; }
+    .ifimgen-lb-panel { width: 100%; padding: 8px; font-size: .82em; }
+    .ifimgen-lb-text { max-height: 34dvh; }
     .ifimgen-lightbox-status { width: 100%; text-align: center; font-size: .85em; }
     .ifimgen-lightbox-bar { width: 100%; gap: 6px; flex: 0 0 auto; padding-bottom: 4px; }
     .ifimgen-lightbox-bar .ifimgen-btn { min-width: 0; flex: 1 1 auto; height: 38px; }

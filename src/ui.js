@@ -10,7 +10,6 @@ import { mountGallery, galleryMarkup } from './gallery.js';
 import { facetsText, FACET_KEYS, DEFAULT_REFINE_SYSTEM, DEFAULT_SCENE_SYSTEM } from './scene.js';
 import { PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from './profile.js';
 import { t, setLang, getLang, LANGS, FLAGS } from './i18n.js';
-import { ledgerBoxHtml, mountLedger } from './ledgerui.js';
 
 /** Set the state class of a status node (ok / error / warn / '') without touching its marker classes (ent-status, ent-profile-status). */
 function setStatusClass(n, cls) { n.classList.remove('ok', 'error', 'warn'); if (cls) n.classList.add(...String(cls).split(/\s+/).filter(Boolean)); }
@@ -470,7 +469,6 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         } catch (e) { status('ifimgen_gen_status', e.message, 'error'); }
     };
     $('ifimgen_regen_last').addEventListener('click', () => regenLast(false));
-    const ledger = mountLedger({ root, settings, save, pipeline, status: (text, cls) => status('ifimgen_ledger_status', text, cls), onEntitiesChanged: () => { refreshEntities(); naturalWarn(); } });
     $('ifimgen_regen_scene_last').addEventListener('click', () => regenLast(true));
 
     // ---- job strip: reflects every image job (auto, per-message button, slash, regen, tests); Cancel aborts them all.
@@ -500,7 +498,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
         // Role of an entry in the OPEN chat: official (active version of the open card / persona), guest (bound to this
         // root chat), always (token advertised only), or nothing. Shown in the dropdown and in the "In this chat" line
         // so the user always sees which profile the images will use.
-        const chatIdent = () => { const ctx = getContext(); const cur = (typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? ''; return { chatId: String(ctx.chatMetadata?.main_chat ?? ctx.chat_metadata?.main_chat ?? '') || String(cur), charAvatar: ctx.characters?.[ctx.characterId]?.avatar ?? '', personaAvatar: ctx.powerUserSettings?.persona_avatar ?? ctx.userAvatar ?? '', activeProfiles: settings.activeProfiles ?? {} }; };
+        const chatIdent = () => { const ctx = getContext(); const cur = (typeof ctx.getCurrentChatId === 'function' ? ctx.getCurrentChatId() : ctx.chatId) ?? ''; return { chatId: String(ctx.chatMetadata?.main_chat ?? ctx.chat_metadata?.main_chat ?? '') || String(cur), charAvatar: ctx.characters?.[ctx.characterId]?.avatar ?? '', personaAvatar: ctx.powerUserSettings?.persona_avatar || ctx.userAvatar || '', activeProfiles: settings.activeProfiles ?? {} }; };
         const ROLE_MARK = { official: '● ', guest: '○ ', always: '∗ ', '': '' };
         const roleOf = e => isStyle ? '' : bindReason(e, list(), chatIdent());
         function renderInUse() {
@@ -781,7 +779,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     const gallery = mountGallery({ panel: root.querySelector('[data-panel="gallery"]'), getContext, viewer, pipeline });
 
     showTab(openTab);
-    return { refresh() { fillModels(); fillPresets(); naturalWarn(); gallery.refresh(); ledger.refresh(); }, refreshLedger: () => ledger.refresh(), refreshGallery: () => gallery.refresh(), refreshEntities: () => { refreshEntities(); naturalWarn(); }, showTab };
+    return { refresh() { fillModels(); fillPresets(); naturalWarn(); gallery.refresh(); }, refreshLedger: () => {}, refreshGallery: () => gallery.refresh(), refreshEntities: () => { refreshEntities(); naturalWarn(); }, showTab };
 }
 
 function fillSelect(sel, items, value, emptyLabel = null) {
@@ -1010,7 +1008,6 @@ function generatePanel() {
             <h4>${t('h_overrides')}</h4>
             <div class="ifimgen-grid2">${numRow('ifimgen_ov_steps', t('lbl_steps'), 0, 150)}${numRow('ifimgen_ov_cfg', t('lbl_cfg'), 0, 30, 0.5)}${numRow('ifimgen_ov_width', t('lbl_width'), 0, 2048, 64)}${numRow('ifimgen_ov_height', t('lbl_height'), 0, 2048, 64)}</div>
         </div>
-        ${ledgerBoxHtml({ boxTitle, btn })}
         <div class="ifimgen-box">
             ${boxTitle('locate', t('box_preview'))}
             <textarea id="ifimgen_preview_scene" class="text_pole ifimgen-preview-scene" rows="4" placeholder="${escapeHtml(t('ph_preview'))}"></textarea>

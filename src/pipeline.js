@@ -78,7 +78,9 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const root = ctx.chatMetadata?.main_chat ?? ctx.chat_metadata?.main_chat ?? '';
         const chatId = String(root || current);
         const charAvatar = ctx.characters?.[ctx.characterId]?.avatar ?? '';
-        const personaAvatar = ctx.powerUserSettings?.persona_avatar ?? ctx.userAvatar ?? '';
+        // index.js injects `userAvatar` (personas.js user_avatar); power_user.persona_avatar does not exist in ST and
+        // is kept only as a harmless first choice for forks that add it.
+        const personaAvatar = ctx.powerUserSettings?.persona_avatar || ctx.userAvatar || '';
         return { chatId, chatFile: String(current), charAvatar, personaAvatar, activeProfiles: settings.activeProfiles ?? {} };
     }
 
@@ -241,7 +243,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
      * (its TOKENS section) resolve in the raw prompts after Details / World.
      * @returns {Promise<{ prompt:string, negative:string, ents:object, expanded:string, final:string, refined:string, unknown:string[] }[]>}
      */
-    async function compileScenes(ctx, scenes, backendId, signal, { setting = '', finals = [] } = {}) {
+    async function compileScenes(ctx, scenes, backendId, signal, { setting = '', finals = [], noRefine = false } = {}) {
         const g = settings.generate;
         const ident = chatIdentity(ctx);
         // Entities are resolved on the union of all scenes so every image carries the same cast.
@@ -253,7 +255,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const dialect = effectiveDialect(settings);
         const final = scenes.map((_, i) => String(finals[i] ?? '').trim());
         let refined = scenes.map(() => '');
-        if (g.mode === 'refine') {
+        if (g.mode === 'refine' && !noRefine) {
             const msgs = buildRefinePrompt({ system: g.refineSystem, dialect, setting: docWords(ctx, setting), shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
             refined = parseRefined(await llm.chat({ ...msgs, signal }), scenes.length);
             if (refined.every(r => !r)) throw new Error('Refine LLM returned no usable prompts.');
@@ -341,10 +343,10 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     const logCompiled = (c, label = '') => log(`compiled${label} [chars: ${c.ents.characters.map(e => e.name).join(',') || '-'} | personas: ${c.ents.personas.map(e => e.name).join(',') || '-'} | style: ${c.ents.style?.name ?? '-'}]`, c.prompt);
 
     /** Compile + render ONE prompt (single regenerate). `setting` = scene document of the message. */
-    async function render(ctx, { scene, p, setting = '', final = '' }, signal, status) {
+    async function render(ctx, { scene, p, setting = '', final = '', noRefine = false }, signal, status) {
         const backend = backends.active();
-        if (settings.generate.mode === 'refine') status('refining prompt…');
-        const c = await compileScene(ctx, scene, backend.id, signal, { setting, finals: [final] });
+        if (settings.generate.mode === 'refine' && !noRefine) status('refining prompt…');
+        const c = await compileScene(ctx, scene, backend.id, signal, { setting, finals: [final], noRefine });
         logCompiled(c);
         return renderCompiled(ctx, { scene, p, setting }, c, signal, status);
     }
@@ -437,18 +439,21 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     /**
      * Re-render one image in place = step 2 (+3) again for that paragraph from the STORED scene document
      * (a new translation of the same scene), never step 1. `scene` (Edit & regenerate) skips the translation and
-     * is used as the prompt draft as-is; entities / style / settings are re-applied at compile time either way.
+     * is used as the prompt draft as-is; `final` is a finished prompt used instead of the smooth version; `keepPrompt`
+     * redraws the stored draft + final without any LLM call. Entities / style / settings are re-applied at compile time.
      */
-    async function regenerate(messageId, url, { scene, onStatus } = {}) {
+    async function regenerate(messageId, url, { scene, final: finalText, onStatus, keepPrompt = false } = {}) {
         const ctx = getContext();
         const msg = ctx.chat[messageId];
         if (!msg) throw new Error('Message not found.');
         if (inflight.has(messageId)) throw new Error('This message is already generating.');
         const rec = findRecord(msg, url);
         const edited = String(scene ?? '').trim();
+        // `final`: a finished prompt typed by the user - sent to the backend as-is (LoRA / quality / negative still added).
+        const editedFinal = String(finalText ?? '').trim();
         const paragraphs = splitParagraphs(stripImages(msg.mes), settings.generate.minParagraphChars);
         const para = paragraphs.find(p => p.index === (rec?.p ?? 0)) ?? null;
-        if (!edited && !para && !String(rec?.scene ?? '').trim()) throw new Error('No stored prompt for this image — use "Edit & regenerate" and type one.');
+        if (!edited && !editedFinal && !para && !String(rec?.scene ?? '').trim() && !String(rec?.prompt ?? '').trim()) throw new Error('No stored prompt for this image — edit the draft and redraw.');
         const controller = new AbortController();
         begin(messageId, controller);
         const status = s => { log(`#${messageId} regen ${s}`); note(s); onStatus?.(s); };
@@ -459,15 +464,19 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if (!had && setting) tm.lap('scene');
             // An edited draft is drawn as typed (no smooth version); otherwise step 2 runs again and its `final` is used,
             // falling back to the stored raw prompt + stored final when the translation fails.
+            // keepPrompt ("Redraw"): no LLM call - the stored draft + final are rendered again as they are.
             let useScene = edited, useFinal = '';
-            if (!useScene && para && setting) {
+            if (editedFinal) { useScene = String(rec?.scene ?? '').trim() || editedFinal; useFinal = editedFinal; }
+            if (!useScene && !keepPrompt && para && setting) {
                 status('writing prompt…');
                 try { const hit = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true }, controller.signal))[0]; useScene = hit?.prompt ?? ''; useFinal = hit?.final ?? ''; }
                 catch (e) { if (e?.name === 'AbortError') throw e; log('regen: translation failed, reusing the stored prompt', e.message); }
                 tm.lap('prompt');
             }
-            if (!useScene) { useScene = String(rec?.scene ?? '').trim(); useFinal = String(rec?.final ?? '').trim(); }
-            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal }, controller.signal, status);
+            if (!useScene) { useScene = String(rec?.scene ?? '').trim() || String(rec?.prompt ?? '').trim(); useFinal = String(rec?.final ?? '').trim(); }
+            if (!useScene) throw new Error('No stored prompt for this image — edit the draft and redraw.');
+            // A user-typed final prompt is sent as written: the refine step must not rewrite it.
+            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal, noRefine: Boolean(editedFinal) }, controller.signal, status);
             tm.lap(settings.generate.mode === 'refine' ? 'refine+image' : 'image');
             if (rec) fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
             const list = records(msg);

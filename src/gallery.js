@@ -16,7 +16,7 @@ export function collectChatImages(chat) {
         for (const img of listImages(m.mes)) {
             const url = safeImageUrl(img.url);
             const rec = recs.find(r => r.url === url) ?? recs.find(r => r.url === img.url);
-            out.push({ url, messageId: i, name: m.name ?? '', scene: rec?.scene ?? '', refined: rec?.refined ?? '', prompt: rec?.prompt ?? img.title ?? '', history: rec?.history ?? [] });
+            out.push({ url, messageId: i, name: m.name ?? '', scene: rec?.scene ?? '', final: rec?.final ?? '', refined: rec?.refined ?? '', prompt: rec?.prompt ?? img.title ?? '', history: rec?.history ?? [] });
         }
     });
     return out;
@@ -44,142 +44,179 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         setTimeout(() => el.classList.remove('ifimgen-flash'), 1500);
     }
 
-    /** @param {GalleryItem[]} items */
+    /**
+     * @param {GalleryItem[]} items
+     * Layout: image (+ version strip) on top, below it a tabbed reader - Scene document (editable, chat images only) /
+     * Prompt draft (editable) / Final prompt (editable) / Refined - then one row of actions. Every text sits in its own
+     * tab instead of one caption blob.
+     */
     function open(items, index = 0) {
         close();
         let idx = Math.max(0, Math.min(index, items.length - 1));
         let busy = false;
+        let tab = 'doc';
         box = document.createElement('div');
         box.className = 'ifimgen-lightbox';
         box.innerHTML = `
-            <img>
-            <div class="ifimgen-lightbox-cap"></div>
-            <div class="ifimgen-lightbox-status ifimgen-status"></div>
-            <div class="ifimgen-lightbox-bar">
-                ${btn({ cls: 'lb-prev', icon: 'play', title: t('vw_prev'), attrs: 'style="transform:scaleX(-1)"' })}
-                ${btn({ cls: 'lb-regen primary', icon: 'refresh', label: t('vw_regen'), title: t('vw_regen_tip') })}
-                ${btn({ cls: 'lb-regen-scene', icon: 'brain', label: t('vw_regen_scene'), title: t('vw_regen_scene_tip') })}
-                ${btn({ cls: 'lb-edit', icon: 'save', label: t('vw_edit') })}
-                ${btn({ cls: 'lb-delete danger', icon: 'trash', title: t('vw_delete') })}
-                ${btn({ cls: 'lb-jump', icon: 'locate', title: t('vw_jump') })}
-                ${btn({ cls: 'lb-open', icon: 'download', title: t('vw_open') })}
-                ${btn({ cls: 'lb-next', icon: 'play', title: t('vw_next') })}
-                ${btn({ cls: 'lb-close', icon: 'x', title: t('vw_close') })}
+            <div class="ifimgen-lb-top">
+                ${btn({ cls: 'lb-prev icon', icon: 'play', title: t('vw_prev'), attrs: 'style="transform:scaleX(-1)"' })}
+                <img>
+                ${btn({ cls: 'lb-next icon', icon: 'play', title: t('vw_next') })}
+            </div>
+            <div class="ifimgen-lightbox-versions"></div>
+            <div class="ifimgen-lb-panel">
+                <div class="ifimgen-lb-head"><b class="ifimgen-lb-title"></b><span class="ifimgen-lb-tabs"></span></div>
+                <div class="ifimgen-lb-body"></div>
+                <div class="ifimgen-lightbox-status ifimgen-status"></div>
+                <div class="ifimgen-lightbox-bar"></div>
             </div>`;
         const q = s => box.querySelector(s);
-        const img = q('img'), cap = q('.ifimgen-lightbox-cap'), st = q('.ifimgen-lightbox-status');
-        // Version strip (shown + older versions of this slot); lives right above the caption.
-        const ver = document.createElement('div'); ver.className = 'ifimgen-lightbox-versions'; cap.parentNode.insertBefore(ver, cap);
-        const fromRec = (it, r) => ({ ...it, url: r.url, scene: r.scene ?? '', refined: r.refined ?? '', prompt: r.prompt ?? '', history: r.history ?? [] });
+        const img = q('img'), title = q('.ifimgen-lb-title'), tabsEl = q('.ifimgen-lb-tabs'), body = q('.ifimgen-lb-body'), st = q('.ifimgen-lightbox-status'), bar = q('.ifimgen-lightbox-bar'), ver = q('.ifimgen-lightbox-versions');
+        const fromRec = (it, r) => ({ ...it, url: r.url, scene: r.scene ?? '', final: r.final ?? '', refined: r.refined ?? '', prompt: r.prompt ?? '', history: r.history ?? [] });
         const setStatus = (text, cls = '') => { st.textContent = text; st.className = `ifimgen-lightbox-status ifimgen-status ${cls}`; };
+        const docOf = it => it.test ? '' : (pipeline.sceneDoc?.(it.messageId) ?? '');
+        /** Tabs available for this item: [id, label, text, editable]. */
+        const tabsOf = it => {
+            if (it.profile) return [['draft', t('vw_tab_draft'), it.draft || '', true], ['final', t('vw_tab_final'), it.prompt || '', true]];
+            if (it.test) return [['final', t('vw_tab_final'), it.prompt || '', true]];
+            const out = [['doc', t('vw_tab_doc'), docOf(it), true], ['draft', t('vw_tab_draft'), it.scene || '', true]];
+            if (it.refined) out.push(['refined', t('vw_tab_refined'), it.refined, false]);
+            out.push(['final', t('vw_tab_final'), it.prompt || '', true]);
+            return out;
+        };
+        const editorText = () => { const ta = body.querySelector('textarea'); return ta ? ta.value.trim() : ''; };
+        const showTab = () => {
+            const it = items[idx];
+            const tabs = tabsOf(it);
+            if (!tabs.some(x => x[0] === tab)) tab = tabs[0][0];
+            tabsEl.innerHTML = tabs.map(([id, label, text]) => `<button type="button" class="ifimgen-lb-tab ${id === tab ? 'active' : ''}" data-tab="${id}">${label}${text ? '' : ' <i>·</i>'}</button>`).join('');
+            const cur = tabs.find(x => x[0] === tab);
+            const [id, , text, editable] = cur;
+            const empty = id === 'doc' ? t('vw_scene_doc_none') : t('vw_no_prompt');
+            const hint = id === 'doc' ? t('vw_hint_doc') : id === 'draft' ? (it.profile ? t('vw_profile_edit_prompt') : t('vw_hint_draft')) : id === 'final' ? t('vw_hint_final') : t('vw_hint_refined');
+            body.innerHTML = `<div class="ifimgen-note">${hint}</div>`
+                + (editable ? `<textarea class="text_pole ifimgen-lb-text" spellcheck="false" placeholder="${escapeHtml(empty)}">${escapeHtml(text)}</textarea>`
+                    : `<pre class="ifimgen-lb-text">${escapeHtml(text || empty)}</pre>`);
+            // Action row depends on the open tab: what is being edited decides what "apply" means.
+            const B = [];
+            if (it.profile || it.test) {
+                B.push(btn({ cls: 'lb-apply primary', icon: 'refresh', label: t('vw_apply_prompt'), title: t('vw_apply_prompt_tip') }));
+            } else if (id === 'doc') {
+                B.push(btn({ cls: 'lb-doc-save', icon: 'save', label: t('vw_doc_save'), title: t('vw_doc_save_tip') }));
+                B.push(btn({ cls: 'lb-doc-save-regen primary', icon: 'refresh', label: t('vw_doc_save_regen'), title: t('vw_doc_save_regen_tip') }));
+                B.push(btn({ cls: 'lb-regen-scene', icon: 'brain', label: t('vw_regen_scene'), title: t('vw_regen_scene_tip') }));
+            } else if (id === 'draft') {
+                B.push(btn({ cls: 'lb-apply primary', icon: 'refresh', label: t('vw_apply_draft'), title: t('vw_apply_draft_tip') }));
+                B.push(btn({ cls: 'lb-rewrite', icon: 'brain', label: t('vw_rewrite'), title: t('vw_rewrite_tip') }));
+                B.push(btn({ cls: 'lb-redraw', icon: 'image', label: t('vw_redraw'), title: t('vw_redraw_tip') }));
+            } else if (id === 'final') {
+                B.push(btn({ cls: 'lb-apply-final primary', icon: 'refresh', label: t('vw_apply_final'), title: t('vw_apply_final_tip') }));
+                B.push(btn({ cls: 'lb-rewrite', icon: 'brain', label: t('vw_rewrite'), title: t('vw_rewrite_tip') }));
+                B.push(btn({ cls: 'lb-redraw', icon: 'image', label: t('vw_redraw'), title: t('vw_redraw_tip') }));
+            } else {
+                B.push(btn({ cls: 'lb-rewrite primary', icon: 'brain', label: t('vw_rewrite'), title: t('vw_rewrite_tip') }));
+                B.push(btn({ cls: 'lb-redraw', icon: 'image', label: t('vw_redraw'), title: t('vw_redraw_tip') }));
+            }
+            B.push(btn({ cls: 'lb-copy icon', icon: 'clipboard', title: t('vw_copy') }));
+            B.push(btn({ cls: 'lb-delete danger icon', icon: 'trash', title: t('vw_delete') }));
+            if (!it.test) B.push(btn({ cls: 'lb-jump icon', icon: 'locate', title: t('vw_jump') }));
+            B.push(btn({ cls: 'lb-open icon', icon: 'download', title: t('vw_open') }));
+            B.push(btn({ cls: 'lb-close icon', icon: 'x', title: t('vw_close') }));
+            bar.innerHTML = B.join('');
+            if (busy) lock(true);
+        };
         const show = () => {
             const it = items[idx];
             img.src = it.url;
-            const doc = it.test ? '' : (pipeline.sceneDoc?.(it.messageId) ?? '');
-            const head = it.profile ? `${t('vw_profile')} · ${escapeHtml(it.name)}${it.profile.current ? '' : ` · ${t('vw_ver_older')}`}` : it.test ? t('vw_test') : `${t('vw_message')} ${it.messageId}`;
-            cap.innerHTML = `<b>#${idx + 1}/${items.length} · ${head}</b>`
-                + (it.test ? '' : (doc
-                    ? `<details class="ifimgen-cap-doc"><summary><span class="ifimgen-cap-k">${t('vw_scene_doc')}</span> ${escapeHtml(doc.split('\n')[0].slice(0, 120))}…</summary><pre>${escapeHtml(doc)}</pre></details>`
-                    : `<div class="ifimgen-note">${t('vw_scene_doc_none')}</div>`))
-                + (it.scene ? `<div><span class="ifimgen-cap-k">${t('vw_scene')}</span> ${escapeHtml(it.scene)}</div>` : '')
-                + (it.refined ? `<div><span class="ifimgen-cap-k">${t('vw_refined')}</span> ${escapeHtml(it.refined)}</div>` : '')
-                + (it.prompt ? `<div><span class="ifimgen-cap-k">${t('vw_final')}</span> ${escapeHtml(it.prompt)}</div>` : `<div class="ifimgen-note">${t('vw_no_prompt')}</div>`);
-            q('.lb-jump').style.display = it.test ? 'none' : '';
-            q('.lb-regen-scene').style.display = it.test ? 'none' : '';
+            const head = it.profile ? `${t('vw_profile')} · ${escapeHtml(it.name)}${it.profile.current ? '' : ` · ${t('vw_ver_older')}`}` : it.test ? t('vw_test') : `${t('vw_message')} #${it.messageId}`;
+            title.innerHTML = `#${idx + 1}/${items.length} · ${head}`;
             const hist = it.history ?? [];
             ver.style.display = hist.length ? '' : 'none';
             ver.innerHTML = hist.length ? `<span class="ifimgen-cap-k">${t('vw_versions')} (${hist.length + 1})</span>`
                 + `<img class="cur" src="${escapeHtml(it.url)}" title="${t('vw_ver_current')}">`
                 + hist.map((h, k) => `<img data-k="${k}" src="${escapeHtml(h.url)}" title="${t('vw_ver_older')}">`).join('') : '';
             setStatus('');
+            showTab();
         };
         const step = d => { if (busy) return; idx = (idx + d + items.length) % items.length; show(); };
-        const onKey = e => { if (e.key === 'Escape') close(); if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); };
-        const lock = v => { busy = v; box.querySelectorAll('.ifimgen-btn').forEach(b => { if (!b.classList.contains('lb-close')) b.disabled = v; }); };
+        const onKey = e => {
+            if (e.target instanceof HTMLTextAreaElement) { if (e.key === 'Escape') e.target.blur(); return; }
+            if (e.key === 'Escape') close(); if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1);
+        };
+        const lock = v => { busy = v; box.querySelectorAll('.ifimgen-btn, .ifimgen-lb-tab').forEach(b => { if (!b.classList.contains('lb-close')) b.disabled = v; }); };
+        /** Run an async job with the viewer locked; errors land in the status line. */
+        const job = async fn => { if (busy) return; lock(true); try { await fn(); } catch (e) { setStatus(e.message, 'error'); } finally { lock(false); } };
+        const applyFresh = (it, fresh) => { if (!fresh) return; items[idx] = it.profile ? { ...it, url: fresh.url, prompt: fresh.prompt, draft: fresh.draft ?? it.draft, profile: { ...it.profile, current: true } } : it.test ? { ...it, url: fresh.url, prompt: fresh.prompt } : fromRec(it, fresh); show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); };
+        const onStatus = s => setStatus(s);
 
-        /** Chat image: `text` is a scene (re-compiled). Test image: `text` is the final prompt (sent as-is). */
-        async function doRegen(text) {
-            const it = items[idx];
-            lock(true);
-            try {
-                if (it.profile) {
-                    const fresh = await pipeline.profileImage({ kind: it.profile.kind, id: it.profile.id, draft: text, onStatus: s => setStatus(s) });
-                    if (fresh) { items[idx] = { ...it, url: fresh.url, prompt: fresh.prompt, draft: fresh.draft ?? it.draft, profile: { ...it.profile, current: true } }; show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
-                } else if (it.test) {
-                    const fresh = await pipeline.regenerateTest(it.url, { prompt: text, onStatus: s => setStatus(s) });
-                    if (fresh) { items[idx] = { ...it, url: fresh.url, prompt: fresh.prompt }; show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
-                } else {
-                    const fresh = await pipeline.regenerate(it.messageId, it.url, { scene: text, onStatus: s => setStatus(s) });
-                    if (fresh) { items[idx] = fromRec(it, fresh); show(); setStatus(t('vw_regenerated'), 'ok'); onChanged(); }
-                }
-            } catch (e) { setStatus(e.message, 'error'); }
-            finally { lock(false); }
+        /**
+         * Chat image: `scene` = a draft drawn as typed (no step 2), `final` = a finished prompt sent as-is, `rewrite` = step 2
+         * again from the stored document, `redraw` = the stored draft + final again without any LLM call.
+         * Profile / test image: `text` is the draft / final prompt.
+         */
+        async function regen(it, o = {}) {
+            if (it.profile) return applyFresh(it, await pipeline.profileImage({ kind: it.profile.kind, id: it.profile.id, draft: o.text, onStatus }));
+            if (it.test) return applyFresh(it, await pipeline.regenerateTest(it.url, { prompt: o.text, onStatus }));
+            return applyFresh(it, await pipeline.regenerate(it.messageId, it.url, { scene: o.scene, final: o.final, keepPrompt: o.redraw === true, onStatus }));
+        }
+        /** Whole-message job (regen scene / save + regenerate): every slot of that message is refreshed from the records. */
+        async function refreshMessage(it, r) {
+            if (r?.cancelled) return;
+            const recs = getContext().chat[it.messageId]?.extra?.ifimgen ?? [];
+            const mine = items.map((x, k) => [x, k]).filter(([x]) => !x.test && x.messageId === it.messageId);
+            mine.forEach(([x, k], n) => { const rec = recs[n]; if (rec) items[k] = fromRec(x, rec); });
+            show(); onChanged();
         }
 
         box.addEventListener('click', e => { if (e.target === box && !busy) close(); });
-        q('.lb-close').addEventListener('click', close);
+        tabsEl.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (!b || busy) return; tab = b.dataset.tab; showTab(); });
+        bar.addEventListener('click', async e => {
+            const b = e.target.closest('.ifimgen-btn'); if (!b) return;
+            const it = items[idx];
+            const ctx = getContext();
+            if (b.classList.contains('lb-close')) return close();
+            if (busy) return;
+            if (b.classList.contains('lb-open')) return downloadUrl(it.url);
+            if (b.classList.contains('lb-jump')) { close(); return jumpTo(it.messageId); }
+            if (b.classList.contains('lb-copy')) { try { await navigator.clipboard.writeText(editorText() || body.textContent || ''); setStatus(t('vw_copied'), 'ok'); } catch { setStatus(t('vw_copy_failed'), 'error'); } return; }
+            if (b.classList.contains('lb-apply')) { const text = editorText(); if (!text) return setStatus(t('vw_empty'), 'error'); return job(() => regen(it, { text, scene: text })); }
+            if (b.classList.contains('lb-apply-final')) { const text = editorText(); if (!text) return setStatus(t('vw_empty'), 'error'); return job(() => regen(it, { final: text })); }
+            if (b.classList.contains('lb-rewrite')) return job(() => regen(it, {}));
+            if (b.classList.contains('lb-redraw')) return job(() => regen(it, { redraw: true }));
+            if (b.classList.contains('lb-doc-save') || b.classList.contains('lb-doc-save-regen')) {
+                const text = editorText(); if (!text) return setStatus(t('vw_empty'), 'error');
+                if (!pipeline.setSceneDoc?.(it.messageId, text)) return setStatus(t('vw_empty'), 'error');
+                setStatus(t('vw_doc_saved'), 'ok');
+                if (!b.classList.contains('lb-doc-save-regen')) return;
+                return job(async () => { const r = await pipeline.regenerateAll(it.messageId, { newScene: false, onStatus }); await refreshMessage(it, r); if (!r?.cancelled) setStatus(t('vw_doc_regenerated', { n: r?.regenerated ?? 0 }), 'ok'); });
+            }
+            if (b.classList.contains('lb-regen-scene')) {
+                return job(async () => { const r = await pipeline.regenerateScene(it.messageId, { onStatus }); await refreshMessage(it, r); if (!r?.cancelled) setStatus(t('vw_scene_regenerated', { n: r?.regenerated ?? 0 }), 'ok'); });
+            }
+            if (b.classList.contains('lb-delete')) {
+                const ok = await ctx.callGenericPopup(t(it.history?.length ? 'vw_confirm_delete_ver' : 'vw_confirm_delete'), ctx.POPUP_TYPE.CONFIRM);
+                if (ok !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
+                return job(async () => {
+                    let next = null;
+                    if (it.profile) pipeline.profileRemove(it.profile.kind, it.profile.id, it.url);
+                    else if (it.test) pipeline.removeTest(it.url);
+                    else next = await pipeline.removeImage(it.messageId, it.url);
+                    if (next) items[idx] = fromRec(it, next); else items.splice(idx, 1);
+                    onChanged();
+                    if (!items.length) return close();
+                    idx = Math.min(idx, items.length - 1); show();
+                });
+            }
+        });
         q('.lb-prev').addEventListener('click', () => step(-1));
         q('.lb-next').addEventListener('click', () => step(1));
-        q('.lb-open').addEventListener('click', () => downloadUrl(items[idx].url));
-        q('.lb-jump').addEventListener('click', () => { close(); jumpTo(items[idx].messageId); });
-        q('.lb-regen').addEventListener('click', () => doRegen(undefined));
-        // Regen scene: step 1 again for the whole message, every image of it redrawn; the viewer list is refreshed from the records.
-        q('.lb-regen-scene').addEventListener('click', async () => {
-            const it = items[idx];
-            if (it.test) return;
-            lock(true);
-            try {
-                const r = await pipeline.regenerateScene(it.messageId, { onStatus: s => setStatus(s) });
-                if (r?.cancelled) return;
-                const ctx = getContext();
-                const recs = ctx.chat[it.messageId]?.extra?.ifimgen ?? [];
-                // Slots keep their order; map every item of this message onto its fresh record by position.
-                const mine = items.map((x, k) => [x, k]).filter(([x]) => !x.test && x.messageId === it.messageId);
-                mine.forEach(([x, k], n) => { const rec = recs[n]; if (rec) items[k] = fromRec(x, rec); });
-                show(); setStatus(t('vw_scene_regenerated', { n: r?.regenerated ?? 0 }), 'ok'); onChanged();
-            } catch (e) { setStatus(e.message, 'error'); }
-            finally { lock(false); }
-        });
-        ver.addEventListener('click', async e => {
+        ver.addEventListener('click', e => {
             const im = e.target.closest('img[data-k]');
             if (!im || busy) return;
             const it = items[idx];
             const h = (it.history ?? [])[Number(im.dataset.k)];
             if (!h) return;
-            lock(true);
-            try {
-                const next = await pipeline.switchVersion(it.messageId, it.url, h.url);
-                if (next) { items[idx] = fromRec(it, next); show(); setStatus(t('vw_ver_switched'), 'ok'); onChanged(); }
-            } catch (err) { setStatus(err.message, 'error'); }
-            finally { lock(false); }
-        });
-        q('.lb-edit').addEventListener('click', async () => {
-            const ctx = getContext();
-            const it = items[idx];
-            const label = it.profile ? t('vw_profile_edit_prompt') : it.test ? t('vw_edit_prompt_final') : t('vw_edit_prompt_scene');
-            const initial = it.profile ? (it.draft || it.prompt || '') : it.test ? it.prompt : (it.scene || it.prompt || '');
-            const text = await ctx.callGenericPopup(label, ctx.POPUP_TYPE.INPUT, initial, { rows: 8, wide: true, okButton: t('vw_regen') });
-            if (typeof text !== 'string' || !text.trim()) return;
-            await doRegen(text.trim());
-        });
-        q('.lb-delete').addEventListener('click', async () => {
-            const ctx = getContext();
-            const ok = await ctx.callGenericPopup(t(items[idx].history?.length ? 'vw_confirm_delete_ver' : 'vw_confirm_delete'), ctx.POPUP_TYPE.CONFIRM);
-            if (ok !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
-            const it = items[idx];
-            lock(true);
-            try {
-                let next = null;
-                if (it.profile) pipeline.profileRemove(it.profile.kind, it.profile.id, it.url);
-                else if (it.test) pipeline.removeTest(it.url);
-                else next = await pipeline.removeImage(it.messageId, it.url);
-                if (next) items[idx] = fromRec(it, next); else items.splice(idx, 1);
-                onChanged();
-                if (!items.length) return close();
-                idx = Math.min(idx, items.length - 1); show();
-            }
-            catch (e) { setStatus(e.message, 'error'); }
-            finally { lock(false); }
+            job(async () => { const next = await pipeline.switchVersion(it.messageId, it.url, h.url); if (next) { items[idx] = fromRec(it, next); show(); setStatus(t('vw_ver_switched'), 'ok'); onChanged(); } });
         });
         document.addEventListener('keydown', onKey);
         box._onKey = onKey;
