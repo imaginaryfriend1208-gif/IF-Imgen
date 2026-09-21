@@ -314,6 +314,10 @@ test('step 1 (scene document): sections, cast details, previous documents (oldes
     assert.ok(st.user.indexOf('DOC A') < st.user.indexOf('DOC B') && st.user.includes('document 2 of 2 (most recent)'), 'previous documents oldest first, latest marked');
     assert.ok(st.user.indexOf('PREVIOUS SCENE DOCUMENTS') < st.user.indexOf('LATEST REPLY'));
     assert.ok(buildScenePrompt({ paragraphs: [], characters: [], personas: [] }).user.includes('(none - this is the first illustrated reply)'));
+    // user rules: appended to the system prompt, declared to win; absent when empty
+    const withRules = buildScenePrompt({ paragraphs: [], characters: [], personas: [], rules: 'Output fully in English.' });
+    assert.ok(withRules.system.startsWith(DEFAULT_SCENE_SYSTEM) && withRules.system.includes('ADDITIONAL RULES FROM THE USER') && withRules.system.endsWith('Output fully in English.'));
+    assert.ok(!buildScenePrompt({ paragraphs: [], characters: [], personas: [], rules: '  ' }).system.includes('ADDITIONAL RULES'));
     assert.equal(defaultSettings().generate.sceneSystem, DEFAULT_SCENE_SYSTEM);
     assert.equal(defaultSettings().generate.sceneHistory, 3);
     // v2 install: old scene-setting prompt dropped, refine system written against "SCENE SETTING" replaced, custom one kept

@@ -309,6 +309,7 @@ function mountOnce({ root, settings, save, backends, llm, pipeline, getContext, 
     const showMode = () => root.querySelectorAll('[data-mode]').forEach(b => b.style.display = b.dataset.mode === g.mode ? '' : 'none');
     bind('ifimgen_mode', () => g.mode, v => { g.mode = v; showMode(); });
     bind('ifimgen_scene_system', () => g.sceneSystem, v => g.sceneSystem = v);
+    bind('ifimgen_scene_rules', () => g.sceneRules ?? '', v => g.sceneRules = v);
     $('ifimgen_scene_reset').addEventListener('click', () => { g.sceneSystem = DEFAULT_SCENE_SYSTEM; $('ifimgen_scene_system').value = g.sceneSystem; save(); });
     bind('ifimgen_refine_system', () => g.refineSystem, v => g.refineSystem = v);
     $('ifimgen_refine_reset').addEventListener('click', () => { g.refineSystem = DEFAULT_REFINE_SYSTEM; $('ifimgen_refine_system').value = g.refineSystem; save(); });
@@ -978,6 +979,9 @@ function generatePanel() {
             <div class="ifimgen-row"><label>${t('lbl_scene_system')}</label>${btn({ id: 'ifimgen_scene_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
             <textarea id="ifimgen_scene_system" class="text_pole" rows="7"></textarea>
             <div class="ifimgen-note">${t('note_scene')}</div>
+            <div class="ifimgen-row"><label>${t('lbl_scene_rules')}</label></div>
+            <textarea id="ifimgen_scene_rules" class="text_pole" rows="4" placeholder="${escapeHtml(t('ph_scene_rules'))}"></textarea>
+            <div class="ifimgen-note">${t('note_scene_rules')}</div>
             <div data-mode="refine" style="display:none">
                 <div class="ifimgen-row"><label>${t('lbl_refine_system')}</label>${btn({ id: 'ifimgen_refine_reset', icon: 'refresh', title: t('btn_reset_default') })}</div>
                 <textarea id="ifimgen_refine_system" class="text_pole" rows="7"></textarea>

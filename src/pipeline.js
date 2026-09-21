@@ -171,7 +171,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const ident = chatIdentity(ctx);
         const ents = resolveEntities(settings, { text: paragraphs.map(p => p.text).join('\n'), ...ident });
         const msgs = buildScenePrompt({
-            system: g.sceneSystem, paragraphs, context,
+            system: g.sceneSystem, rules: g.sceneRules, paragraphs, context,
             previous: previousSceneDocs(ctx, messageId, clamp(g.sceneHistory ?? 3, 0, 10)),
             characters: ents.characters, personas: ents.personas,
             ledger: ledgerBlock(chatLedger(ctx, messageId)),

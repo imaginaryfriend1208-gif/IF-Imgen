@@ -55,6 +55,7 @@ export function defaultSettings() {
             // Calls per reply: 'plan' = 2 (scene document + translate to prompts) | 'refine' = 3 (+ ONE batch refine for all images)
             mode: 'plan',
             sceneSystem: DEFAULT_SCENE_SYSTEM,
+            sceneRules: '',             // the user's own short rules for the scene document, appended to sceneSystem (survive a default-prompt update)
             refineSystem: DEFAULT_REFINE_SYSTEM,
             profileSystem: DEFAULT_PROFILE_SYSTEM, // ONE call: entity data -> portrait prompt (Characters / Personas -> Profile image)
             useQualityPrefix: true,

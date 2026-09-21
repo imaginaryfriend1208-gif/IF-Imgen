@@ -207,7 +207,13 @@ Rules: state only what the text, the cast and the previous documents say or clea
  *   previous - scene documents of earlier replies (oldest first) handed over for continuity
  */
 export function buildScenePrompt(a) {
-    const system = String(a.system || DEFAULT_SCENE_SYSTEM);
+    // `rules`: the user's own additions (Generate -> "Extra rules for the scene document"). Appended after the system
+    // prompt and declared to win on conflict, so a user can steer the document without copying / forking the whole prompt.
+    const rules = String(a.rules ?? '').trim();
+    const system = String(a.system || DEFAULT_SCENE_SYSTEM) + (rules ? `
+
+ADDITIONAL RULES FROM THE USER (they override the rules above when the two conflict):
+${rules}` : '');
     const cast = [...(a.characters ?? []).map(e => [e, 'character']), ...(a.personas ?? []).map(e => [e, 'user persona'])];
     // Each detail is shown as its token + text, so the planner can write the token and still knows what it means.
     const castBlock = cast.map(([e, label]) => {
