@@ -54,7 +54,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
         close();
         let idx = Math.max(0, Math.min(index, items.length - 1));
         let busy = false;
-        let tab = 'doc';
+        let tab = 'draft';
         box = document.createElement('div');
         box.className = 'ifimgen-lightbox';
         box.innerHTML = `
@@ -101,28 +101,26 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             const B = [];
             if (it.profile || it.test) {
                 B.push(btn({ cls: 'lb-apply primary', icon: 'refresh', label: t('vw_apply_prompt'), title: t('vw_apply_prompt_tip') }));
-            } else if (id === 'doc') {
-                B.push(btn({ cls: 'lb-doc-save', icon: 'save', label: t('vw_doc_save'), title: t('vw_doc_save_tip') }));
-                B.push(btn({ cls: 'lb-doc-save-regen primary', icon: 'refresh', label: t('vw_doc_save_regen'), title: t('vw_doc_save_regen_tip') }));
-                B.push(btn({ cls: 'lb-regen-scene', icon: 'brain', label: t('vw_regen_scene'), title: t('vw_regen_scene_tip') }));
-            } else if (id === 'draft') {
-                B.push(btn({ cls: 'lb-apply primary', icon: 'refresh', label: t('vw_apply_draft'), title: t('vw_apply_draft_tip') }));
-                B.push(btn({ cls: 'lb-rewrite', icon: 'brain', label: t('vw_rewrite'), title: t('vw_rewrite_tip') }));
-                B.push(btn({ cls: 'lb-redraw', icon: 'image', label: t('vw_redraw'), title: t('vw_redraw_tip') }));
-            } else if (id === 'final') {
-                B.push(btn({ cls: 'lb-apply-final primary', icon: 'refresh', label: t('vw_apply_final'), title: t('vw_apply_final_tip') }));
-                B.push(btn({ cls: 'lb-rewrite', icon: 'brain', label: t('vw_rewrite'), title: t('vw_rewrite_tip') }));
-                B.push(btn({ cls: 'lb-redraw', icon: 'image', label: t('vw_redraw'), title: t('vw_redraw_tip') }));
             } else {
-                B.push(btn({ cls: 'lb-rewrite primary', icon: 'brain', label: t('vw_rewrite'), title: t('vw_rewrite_tip') }));
-                B.push(btn({ cls: 'lb-redraw', icon: 'image', label: t('vw_redraw'), title: t('vw_redraw_tip') }));
-            }
+                // Per-image actions are on EVERY tab (users opening the Scene document tab saw only whole-message buttons
+                // and concluded single-image regen did not exist). Tab-specific actions come first.
+                if (id === 'doc') {
+                    B.push(btn({ cls: 'lb-doc-save', icon: 'save', label: t('vw_doc_save'), title: t('vw_doc_save_tip') }));
+                    B.push(btn({ cls: 'lb-doc-save-regen', icon: 'refresh', label: t('vw_doc_save_regen'), title: t('vw_doc_save_regen_tip') }));
+                    B.push(btn({ cls: 'lb-regen-scene', icon: 'brain', label: t('vw_regen_scene'), title: t('vw_regen_scene_tip') }));
+                } else if (id === 'draft') {
+                    B.push(btn({ cls: 'lb-apply primary', icon: 'refresh', label: t('vw_apply_draft'), title: t('vw_apply_draft_tip') }));
+                } else if (id === 'final') {
+                    B.push(btn({ cls: 'lb-apply-final primary', icon: 'refresh', label: t('vw_apply_final'), title: t('vw_apply_final_tip') }));
+                }
+                B.push(btn({ cls: `lb-redraw ${id === 'doc' || id === 'refined' ? 'primary' : ''}`, icon: 'image', label: t('vw_redraw_one'), title: t('vw_redraw_tip') }));
+                B.push(btn({ cls: 'lb-rewrite', icon: 'brain', label: t('vw_rewrite_one'), title: t('vw_rewrite_tip') }));
             B.push(btn({ cls: 'lb-copy icon', icon: 'clipboard', title: t('vw_copy') }));
             B.push(btn({ cls: 'lb-delete danger icon', icon: 'trash', title: t('vw_delete') }));
             if (!it.test) B.push(btn({ cls: 'lb-jump icon', icon: 'locate', title: t('vw_jump') }));
             B.push(btn({ cls: 'lb-open icon', icon: 'download', title: t('vw_open') }));
             B.push(btn({ cls: 'lb-close icon', icon: 'x', title: t('vw_close') }));
-            const scope = it.profile || it.test ? '' : `<div class="ifimgen-lb-scope">${id === 'doc' ? t('vw_scope_all') : t('vw_scope_one')}</div>`;
+            const scope = it.profile || it.test ? '' : `<div class="ifimgen-lb-scope">${t('vw_scope')}</div>`;
             bar.innerHTML = scope + B.join('');
             if (busy) lock(true);
         };
