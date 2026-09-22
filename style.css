@@ -115,7 +115,15 @@
 .ifimgen-thumb:hover img { transform: scale(1.07); }
 .ifimgen-thumb:hover { border-color: var(--ifg-accent); }
 .ifimgen-thumb figcaption { position: absolute; left: 0; right: 0; bottom: 0; font-size: .7em; padding: 1px 5px; background: rgba(0, 0, 0, .65); color: #fff; }
-.ifimgen-lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .9); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
+.ifimgen-lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .9); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 10px; padding: 16px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
+/* Vertical centring that survives overflow: with justify-content:center a column taller than the window pushes its top
+   out of reach (the "everything jumps to the top / gets cut" on a small desktop window); auto margins on the first and
+   last child centre the column when it fits and let it scroll from the top when it does not. */
+.ifimgen-lightbox > :first-child { margin-top: auto; }
+.ifimgen-lightbox > :last-child { margin-bottom: auto; }
+/* the image row shrinks first when the window is short, so the reader panel keeps its height */
+.ifimgen-lb-top { flex: 0 1 auto; min-height: 0; }
+.ifimgen-lb-top > img { max-height: min(48vh, calc(100vh - 380px)); min-height: 120px; }
 /* viewer layout: image row on top (prev / image / next), version strip, then a reader panel with tabs + one action row */
 .ifimgen-lb-top { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 0; flex: 0 1 auto; }
 .ifimgen-lb-top > img { max-width: min(92vw, 1200px); max-height: 48vh; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 40px rgba(0, 0, 0, .6); }
@@ -228,13 +236,15 @@ body:not(.ifimgen-collapse) .ifimgen-fold-body { display: block; }
 
 /* ---- viewer on phones: top-anchored scrolling column, nothing clipped, prompt wraps inside the screen */
 @media (max-width: 768px) {
+    .ifimgen-lightbox > :first-child { margin-top: 0; }
+    .ifimgen-lightbox > :last-child { margin-bottom: 0; }
     .ifimgen-lightbox {
         justify-content: flex-start; gap: 8px;
         height: 100dvh; width: 100vw;
         padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(14px + env(safe-area-inset-bottom, 0px));
     }
     .ifimgen-lb-top { gap: 4px; }
-    .ifimgen-lb-top > img { max-width: calc(100vw - 100px); max-height: 42dvh; width: auto; height: auto; }
+    .ifimgen-lb-top > img { max-width: calc(100vw - 100px); max-height: 42dvh; min-height: 0; width: auto; height: auto; }
     .ifimgen-lb-panel { width: 100%; padding: 8px; font-size: .82em; }
     .ifimgen-lb-text { max-height: 34dvh; }
     .ifimgen-lightbox-status { width: 100%; text-align: center; font-size: .85em; }

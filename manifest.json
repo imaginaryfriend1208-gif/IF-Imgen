@@ -7,7 +7,7 @@
     "css": "style.css",
     "generate_interceptor": "ifimgenInterceptor",
     "author": "Diuen",
-    "version": "0.14.3",
+    "version": "0.14.4",
     "homePage": "",
     "auto_update": false
 }
