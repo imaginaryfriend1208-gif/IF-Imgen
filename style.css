@@ -141,6 +141,7 @@
 textarea.ifimgen-lb-text { color: #eee; }
 pre.ifimgen-lb-text { user-select: text; }
 .ifimgen-lightbox-bar { display: flex; gap: 6px; }
+.ifimgen-lb-scope { flex: 1 0 100%; font-size: .8em; opacity: .65; margin-bottom: 2px; }
 .ifimgen-lightbox .ifimgen-btn { background: rgba(255, 255, 255, .12); color: #fff; border-color: rgba(255, 255, 255, .3); }
 #chat .mes.ifimgen-flash { outline: 2px solid var(--SmartThemeQuoteColor, #7aa2f7); outline-offset: -2px; transition: outline-color 1.2s; }
 

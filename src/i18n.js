@@ -210,6 +210,7 @@ const en = {
     vw_doc_save: 'Save', vw_doc_save_tip: 'Store the edited scene document on the message (no LLM, no image)',
     vw_doc_save_regen: 'Save + regenerate all', vw_doc_save_regen_tip: 'Store the edited document, then rewrite the prompts of every image of this message from it and redraw them',
     vw_doc_saved: 'Scene document saved.', vw_doc_regenerated: 'Scene document saved, {n} image(s) redrawn.',
+    vw_slot: 'image {i} of {n}', vw_scope_one: 'These buttons redraw THIS image only. Scene document tab = all images of the message.', vw_scope_all: 'These buttons act on the scene document, so they redraw ALL images of this message.',
     vw_copy: 'Copy text', vw_copied: 'Copied.', vw_copy_failed: 'Clipboard not available.', vw_empty: 'The text is empty.',
 
     // ---- chat
@@ -425,6 +426,7 @@ const vi = {
     vw_doc_save: 'Lưu', vw_doc_save_tip: 'Lưu scene document đã sửa vào tin nhắn (không LLM, không vẽ)',
     vw_doc_save_regen: 'Lưu + vẽ lại tất cả', vw_doc_save_regen_tip: 'Lưu document đã sửa, rồi viết lại prompt của mọi ảnh trong tin nhắn này từ đó và vẽ lại',
     vw_doc_saved: 'Đã lưu scene document.', vw_doc_regenerated: 'Đã lưu scene document, vẽ lại {n} ảnh.',
+    vw_slot: 'ảnh {i}/{n}', vw_scope_one: 'Các nút này chỉ vẽ lại ẢNH NÀY. Tab Scene document = toàn bộ ảnh của tin nhắn.', vw_scope_all: 'Các nút này tác động lên scene document nên vẽ lại TẤT CẢ ảnh của tin nhắn.',
     vw_copy: 'Sao chép', vw_copied: 'Đã sao chép.', vw_copy_failed: 'Không truy cập được clipboard.', vw_empty: 'Văn bản đang trống.',
 
     // ---- chat

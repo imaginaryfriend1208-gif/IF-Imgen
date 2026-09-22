@@ -122,13 +122,16 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
             if (!it.test) B.push(btn({ cls: 'lb-jump icon', icon: 'locate', title: t('vw_jump') }));
             B.push(btn({ cls: 'lb-open icon', icon: 'download', title: t('vw_open') }));
             B.push(btn({ cls: 'lb-close icon', icon: 'x', title: t('vw_close') }));
-            bar.innerHTML = B.join('');
+            const scope = it.profile || it.test ? '' : `<div class="ifimgen-lb-scope">${id === 'doc' ? t('vw_scope_all') : t('vw_scope_one')}</div>`;
+            bar.innerHTML = scope + B.join('');
             if (busy) lock(true);
         };
         const show = () => {
             const it = items[idx];
             img.src = it.url;
-            const head = it.profile ? `${t('vw_profile')} · ${escapeHtml(it.name)}${it.profile.current ? '' : ` · ${t('vw_ver_older')}`}` : it.test ? t('vw_test') : `${t('vw_message')} #${it.messageId}`;
+            const sib = it.test ? [] : items.filter(x => !x.test && x.messageId === it.messageId);
+            const slot = sib.length > 1 ? ` · ${t('vw_slot', { i: sib.indexOf(it) + 1, n: sib.length })}` : '';
+            const head = it.profile ? `${t('vw_profile')} · ${escapeHtml(it.name)}${it.profile.current ? '' : ` · ${t('vw_ver_older')}`}` : it.test ? t('vw_test') : `${t('vw_message')} #${it.messageId}${slot}`;
             title.innerHTML = `#${idx + 1}/${items.length} · ${head}`;
             const hist = it.history ?? [];
             ver.style.display = hist.length ? '' : 'none';
