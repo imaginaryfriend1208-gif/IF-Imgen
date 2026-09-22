@@ -188,53 +188,61 @@ TOKENS
 A token is a pointer to one stored visual description. Tokens are replaced by their stored text automatically later, so the document must never copy that text and must never use a token that is not stored or defined.
 
 Namespaces:
-$<person>            a known person listed in the CAST (character or user persona, e.g. $yen). Written alone it stands for that person. Every CAST person is always written by their own token - never as "a woman", "a man", "the girl" - and never gets a second token.
-$<person>.<key>      something that belongs to that person (their body, their clothes, their hair, their room, their car, their pet).
-$world.<key>         something nobody in the cast owns: an NPC, a public or shared place, a vehicle or object of the story.
-"detail" and "world" are categories, not path segments: write $yen.mole, never $yen.detail.mole.
+$<person>            a known person listed in the CAST (character or user persona, e.g. $yenji). Alone it stands for that person. Every CAST person is always written by token - never "a woman", "a man", "the girl" - and never gets a second token.
+$<person>.<key>      something personal of that CAST person: clothes, hairstyle, accessories, body parts, personal items, and the rooms / vehicles / pets they own. Personal things ALWAYS go under the person's own key, never under $world ($kenjou.outfit_club, $yenji.hair_club, $kenjou.nsfw_dick).
+$world.<key>         everything nobody in the cast owns: NPCs, public or shared places and the objects in them.
+"detail" and "world" are categories, not path segments: write $yenji.mole, never $yenji.detail.mole.
 
-Person tokens ($<person>.<key>), three kinds:
-1. Body marks, fixed: $yen.mole: a faint red mole under the left eye. Write them only when the scene shows that mark clearly (close-up, the mark is uncovered). Never redefine them.
-2. Garments, hairstyles, accessories: the object itself with its permanent condition, never its momentary state. $yen.silk_short_dress: a thigh-length nude silk spaghetti-strap dress with a V neckline and open back. Each hairstyle is its own token ($yen.hair_bun, $yen.hair_down); pick the one in use, do not redefine one into another.
-3. Rooms and possessions: $yen.bedroom, $yen.bed, $yen.bathroom, $yen.car, $yen.cat. A room is composed from part tokens: define each notable fixed piece as its own token, then the room token gives size, walls, windows and where each part is, referring to the parts by token ($yen.bedroom: a small room with one large window, $yen.bed in the middle, $yen.bathroom door to the right of the entrance).
-A place belongs to a person when they own it or live in it; otherwise it is $world.
-
-World tokens ($world.<key>), two kinds:
-1. NPCs, prefix npc_: everything an image model needs to recognise them: apparent age, build, hair, face, base clothes, permanent marks. $world.npc_william: a tall heavy old man with short wavy grey hair and a short white beard, in a faded blue shirt, old blue jeans, a worn leather belt and cracked leather shoes
-2. Places, no prefix: the layout of a visited place, what is on the left, right, back, and where fixed things stand. Stalls, signs, furniture or objects there that may change later get their own part tokens ($world.chinatown_noodle_stall) and the place token refers to them.
+Keys and texts by kind:
+- Garments, hairstyles, personal items of a CAST person: $<person>.<what>_<occasion or place> ($kenjou.outfit_club, $yenji.outfit_yukata, $yenji.hair_club). Each outfit and each hairstyle is its own token; pick the one in use, never redefine one into another.
+- World objects: $world.<place>_<object> ($world.yenjiclub_sake_bottle, $world.yenjiclub_low_table). The text describes the object only - never the place name, never where it stands.
+- NPCs: $world.npc_<name> ($world.npc_ayumi). The text is the fixed look ONLY: apparent age, nationality or ethnicity, build, hair (colour, length, cut), face and eyes, permanent marks. NO clothes in the token - what an NPC wears is written in the scene each time, like everyone else.
+- NSFW body parts: $<person>.nsfw_<part> for CAST people ($kenjou.nsfw_dick), $world.npc_<name>_nsfw_<part> for NPCs ($world.npc_ayumi_nsfw_pussy). Direct, explicit and detailed - shape, size, colour, hair, distinguishing features - so the part looks the same in every later image and differs between people.
+- Rooms and places: define each notable fixed piece as its own token, then the room token gives size, walls, windows and where each part is, referring to the parts by token. A place belongs to a person when they own it or live in it; otherwise it is $world.
 
 Writing a token text:
-- one noun phrase, lowercase, no verb, no full stop, so it can sit inside a sentence
-- order: count, material, colour, the thing, distinguishing features, permanent condition (a soft yellow cotton shirt with long sleeves, faded and frayed at the cuffs)
-- full visual: enough for an image model to reproduce it the same way every time
+- SHORT: one noun phrase, lowercase, no verb, no full stop, so it can sit inside a sentence. The SCENE section repeats tokens many times, so every extra word in a token is paid many times over.
+- ALWAYS with colour: material + colour + the thing + one or two distinguishing features (a black dress shirt with an open collar and black slacks; a small round white ceramic sake flask with a blue bird pattern). Colour is what keeps later images, generated without this context, looking like the same thing.
 - no momentary state (unbuttoned, wet, pushed off one shoulder, lying on the floor): that goes after the token in the scene text
-- keys are lowercase snake_case, named for what the thing IS (silk_short_dress), never for a state (torn_dress). Never reuse an existing key for a different thing.
+- keys lowercase snake_case, named for what the thing IS (silk_short_dress), never for a state (torn_dress). Never reuse an existing key for a different thing.
 - a token may refer to other tokens of the same owner or of $world; every referenced token must exist; no circular references; at most two levels (a room refers to its parts, a part refers to nothing)
 
-Using a token: write the token, then only what differs right now. Text after a token overrides the token; when a garment is removed, name it (WEARING: $yen wearing $yen.silk_short_dress, one strap slipped off the shoulder; $yen.cardigan removed, on the chair). When the current thing has no token and will not return, describe it in words.
-
-Defining a token: when this reply shows something that has no token yet and will come back later (a new outfit or hairstyle of a known person, an NPC physically present, a place visited, a vehicle or pet, a piece of furniture in an owned room), define it once at the top of the document in the TOKENS section, one per line: $key: <text>. Something that returns: an NPC with a name or lines, a place described or visited more than once, a garment described with two or more details, a named pet or vehicle. One-off props get no token.
-
-Updating a token: when the thing itself has changed for good (a shirt has aged, a button is lost, a dress is stained with wine that stays, the bed got a new cover, the curtain is replaced, the NPC shaved his beard), redefine the SAME key in TOKENS with the new full text. The newest definition wins for this document and every later one until it is redefined again. Do not redefine for momentary states. A thing replaced by another of the same role keeps the key (a new curtain in the same window is still $yen.curtain); a new thing that coexists with the old gets a new key.
-
+Defining a token: when this reply shows something that has no token yet and will come back later (a new outfit or hairstyle of a known person, an NPC physically present, a place visited, a vehicle or pet, a piece of furniture, a body part shown), define it once in the TOKENS section, one per line: $key: <text>. One-off props get no token.
+Updating a token: when the thing itself has changed for good (a shirt has aged, a button is lost, a dress is stained with wine that stays, the NPC shaved his beard), redefine the SAME key in TOKENS with the new full text. The newest definition wins for this document and every later one until it is redefined again. Never redefine for momentary states.
 Reuse: a token listed in the CAST, in CHAT TOKENS or defined in a PREVIOUS DOCUMENT keeps its name and its text unless this reply changes the thing itself. Never invent a second name for the same thing, never guess what a stored entry contains.
+Using a token: write the token, then only what differs right now ($yenji wearing $yenji.outfit_yukata, collar loosened and slipped down showing the nape). The first mention of a CAST person in a paragraph is the token ($kenjou); the following mentions in the same paragraph use the name (Kenjou). NPCs are always written by token.
 
-OUTPUT: plain text, English only, short factual lines in a visual-description style (what a camera would see - never story prose, never dialogue), in this order:
-TOKENS: (only when needed - the new token definitions described above; omit the section when there is nothing new)
-SCENE: what happens in this reply in 2-3 sentences; the mood; the visual style or genre feel (quiet domestic drama, tense noir, warm slice of life...).
-LOCATION: indoors or outdoors; the type of place (bedroom, kitchen, alley, forest road...); time of day; weather; the light sources and the quality of the light (colour, direction, intensity).
-LAYOUT: the room or area in detail - size, walls / floor / ceiling or ground and sky, doors and windows, every notable piece of furniture and prop and WHERE it is (bed against the left wall, nightstand with a lit lamp on its right, window behind the bed, clothes on the floor by the door...). When the place is the same as in a previous document, carry its layout over and only add what is new.
-PEOPLE PRESENT: the count first, then the tokens (3 people present: $yenji, $kenjou, $world.npc_aya). People only mentioned, remembered or on the phone are NOT present.
-For EACH person present, one block:
-- $token
-  WEARING: written as "$token wearing $token.outfit, <state>" - every garment right now with its colour, material or pattern when known, and its state (buttoned, unbuttoned, soaked, torn, pushed off one shoulder, removed and lying where...). Include footwear and accessories. If the CAST lists an outfit detail for that person, write its token plus the current state unless the text clearly says they wear something else. If undressed, say exactly what is on and what is off.
-  EXPRESSION: written as "<Name> is <visible cues>" (Yenka is gasping, open mouth, cheeks red, eyes watering) - the face and the gaze (what or whom they look at), the emotion as it shows on the face.
-  DOING: what they do over the course of this reply, in order, with the paragraph number of each action ([3] sits on the edge of the bed...).
-  POSE / POSITION: body position and where they are relative to the others and to the layout (standing by the window, kneeling at the foot of the bed, facing away...).
-  If clothing changes during the reply, note the change under DOING with its paragraph number and put the FINAL state under WEARING.
+OUTPUT: plain text, English only, short visual lines (what a camera would see - never story prose, never dialogue), these sections in this order:
+CONTEXT: 2-3 sentences: who is where and what happens in this reply, with tokens for every known person; the mood and the visual style or genre feel (quiet domestic drama, tense noir, warm slice of life).
+LOCATION: indoors or outdoors; the type of place; time of day; weather; the light sources and the quality of the light (colour, direction, intensity).
+TOKENS: the new or updated token definitions of this reply, one per line, as described above; omit the section when there is nothing new.
+LAYOUT: the room or area with every notable fixed piece and WHERE it is, written with the place and part tokens (bed against the left wall, nightstand with a lit lamp on its right, window behind the bed, clothes on the floor by the door). When the place is the same as in a previous document, carry its layout over and only add what is new.
+PEOPLE PRESENT: the count first, then who is where, grouped by spot (4 people present: $world.npc_ayumi and $world.npc_ryo inside the room; $kenjou and $yenji in the corridor looking in through the half-open door). People only mentioned, remembered or on the phone are NOT present.
+SCENE: one paragraph per visual moment of the reply, in text order, each starting with its paragraph number [3]. Every paragraph answers, in this order and for EVERY person in it: WHO (token), WEARING WHAT (token + current state: $kenjou wearing $kenjou.outfit_club, sleeves rolled twice), WHERE in the layout, WHAT THEY DO (a concrete verb with body parts and placement: leaning in closer to Yenji; sitting back on the futon with legs spread wide, fingers rubbing her clit; stroking his cock up and down), and THEIR FACE (visible cues: face flushed, eyes narrowed; mouth open, eyes wide, cheeks red; teeth gritted, panting). Never a person without wearing / doing / face; never "someone" or "a person" for a listed person. Explicit content is written plainly with the real words for acts, body parts and fluids, with the nsfw tokens when they exist - never softened, implied or skipped. If clothing changes during the reply, the paragraph where it changes says so and later paragraphs carry the new state.
 CONTINUITY: what stays as in the previous document and what changed (moved to another room, undressed, a new prop, time passed, someone left or arrived).
 
-Rules: state only what the text, the cast and the previous documents say or clearly imply; never invent new people; never describe fixed looks (hair colour, eyes, body, face, height) - those are attached automatically; never contradict a previous document unless this reply clearly changes it. Explicit content is written plainly with the real words for acts, body parts and fluids - never softened, implied or skipped. No preamble, no markdown, no quotes.`;
+Rules: state only what the text, the cast and the previous documents say or clearly imply; never invent new people; never describe the fixed looks of CAST people (hair colour, eyes, body, face, height) - those are attached automatically by their token; never contradict a previous document unless this reply clearly changes it. No preamble, no markdown, no quotes.
+
+EXAMPLE (shape and density to match; the tokens are examples, use the ones of your CAST):
+CONTEXT: Evening at the club. $yenji leads $kenjou down the pleasure wing; through a half-open door $world.npc_ayumi is servicing her guest $world.npc_ryo. Kenjou glances in and flushes. Hushed, warm, voyeuristic; classic Japanese night-club noir.
+LOCATION: indoors, narrow corridor of a traditional Japanese night club, night; paper lanterns hanging low, dim red-gold light from above, deep shadow at floor level.
+TOKENS:
+$kenjou.outfit_club: a black dress shirt with the top buttons open and black slacks
+$kenjou.hair_club: black hair slicked straight back
+$yenji.outfit_yukata: a turmeric-yellow yukata with a jade-green obi
+$yenji.hair_club: a thick geisha-style bun at the nape held by a small gold hairpin
+$world.yenjiclub_sake_bottle: a small round white ceramic sake flask with a blue bird pattern
+$world.yenjiclub_low_table: a round brown wooden table on three ball feet
+$world.npc_ayumi: a Japanese woman in her twenties, small build, chestnut-brown hair cut in a straight fringe
+$world.npc_ryo: a tall broad Japanese man with a platinum-dyed undercut and monolid eyes
+$kenjou.nsfw_dick: a thick cock with prominent veins and a purple circumcised head
+$world.npc_ayumi_nsfw_pussy: a small pink tulip-shaped pussy with a neatly trimmed triangle of hair
+LAYOUT: $yenji.yenclub_pleasure_wing: a narrow tatami corridor, paper lanterns hanging low along the ceiling, sliding doors on the left every few steps; the second door stands a hand's width open. Inside that room: a futon on the floor in the middle, $world.yenjiclub_low_table by the right wall with $world.yenjiclub_sake_bottle and two cups on it.
+PEOPLE PRESENT: 4 people present: $world.npc_ayumi and $world.npc_ryo inside the room; $kenjou and $yenji in the corridor looking in through the gap.
+SCENE:
+[2] $yenji wearing $yenji.outfit_yukata, collar loosened and slipped down showing the nape, with $yenji.hair_club, walks ahead down the corridor, one hand trailing the wall, glancing back over her shoulder with a small closed-lip smile. $kenjou wearing $kenjou.outfit_club, sleeves rolled twice, with $kenjou.hair_club, follows one step behind, leaning in closer to Yenji, face flushed, eyes narrowed.
+[4] Through the gap $kenjou sees $world.npc_ayumi, a red silk robe pushed off both shoulders and nothing else, sitting back on the futon with legs spread wide, fingers rubbing $world.npc_ayumi_nsfw_pussy, mouth open, eyes wide, cheeks red; $world.npc_ryo, shirtless in grey trousers open at the fly, kneels at the foot of the futon stroking his cock up and down, teeth gritted, panting, eyes on her.
+CONTINUITY: same club as the previous document, moved from the main hall to the pleasure wing; Kenjou's untouched sake cup left on his corner table; Ayumi and Ryo new this reply.`;
 
 /**
  * Build the scene-document messages (step 1, one call per message, shared by all its images).

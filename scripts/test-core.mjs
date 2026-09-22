@@ -298,8 +298,8 @@ test('batch refine: ONE call carries the scene document + all shots; facets of e
 
 test('step 1 (scene document): sections, cast details, previous documents (oldest first) and context; settings v2 -> v3 migration', () => {
     const st = buildScenePrompt({ paragraphs: [{ index: 1, text: 'She stood in the rain.' }], context: 'earlier', characters: [rosario], personas: [yenka], previous: [{ id: 3, text: 'DOC A' }, { id: 7, text: 'DOC B' }] });
-    for (const k of ['SCENE:', 'LOCATION:', 'LAYOUT:', 'PEOPLE PRESENT:', 'WEARING:', 'EXPRESSION:', 'DOING:', 'POSE / POSITION:', 'CONTINUITY:']) assert.ok(st.system.includes(k), `section ${k}`);
-    assert.ok(st.system.includes('colour') && st.system.includes('WHERE it is'), 'clothing colours + prop placement demanded');
+    for (const k of ['CONTEXT:', 'LOCATION:', 'TOKENS:', 'LAYOUT:', 'PEOPLE PRESENT:', 'SCENE:', 'CONTINUITY:', 'WHO (token)', 'WEARING WHAT', 'WHAT THEY DO', 'THEIR FACE']) assert.ok(st.system.includes(k), `section ${k}`);
+    assert.ok(st.system.includes('ALWAYS with colour') && st.system.includes('WHERE it is') && st.system.includes('$world.<place>_<object>') && st.system.includes('$world.npc_<name>') && st.system.includes('nsfw_<part>'), 'colour, placement, key naming rules demanded');
     assert.ok(st.system.includes('TOKENS:') && st.system.includes('$<person>.<key>') && st.system.includes('$world.<key>') && st.system.includes('Defining a token'), 'planner is told to write tokens and define new ones');
     assert.ok(st.user.includes('$yenka.outfit: white button-up shirt') && st.user.includes('token $rosario') && st.user.includes('[1] She stood') && st.user.includes('EARLIER CONTEXT'));
     // Stored document keeps tokens; the downstream LLMs get words. Unknown tokens are kept, not dropped.
