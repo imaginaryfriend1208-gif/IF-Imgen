@@ -5,7 +5,7 @@
 //         %placeholders% is rendered here and sent on the SAME A1111 txt2img request as `ifimgen_workflow`
 //         (so URL + auth + the proxy's queue keep working). The comfy-cloud proxy runs it as-is on Comfy Cloud;
 //         a plain ComfyUI URL is handled by /api/sd/comfy/* instead (sd.workflowTarget = 'comfy').
-//  nai: NovelAI, browser-direct (image.novelai.net answers CORS *).
+//  nai: NovelAI, browser-direct (image.novelai.net answers CORS *; account + image endpoints both live there since 2026-09).
 import { renderWorkflow, extractLoras, injectLoras } from './comfy.js';
 
 export const NAI_MODELS = [
@@ -97,8 +97,11 @@ export function createNaiBackend({ settings }) {
     return {
         id: 'nai',
         async test() {
-            const r = await fetch('https://api.novelai.net/user/subscription', { headers: headers() });
+            // api.novelai.net/user/subscription now answers 400 "Please refresh NovelAI.net. If using a third-party tool, update to
+            // the image URL" - the account endpoints moved to image.novelai.net (which also answers CORS *). Same JSON shape.
+            const r = await fetch('https://image.novelai.net/user/subscription', { headers: headers() });
             if (r.status === 401) throw new Error('NovelAI key rejected.');
+            if (r.status === 400) throw new Error(`NovelAI: ${((await r.json().catch(() => null))?.message) || 'HTTP 400'}`);
             if (!r.ok) throw new Error(`NovelAI HTTP ${r.status}`);
             const d = await r.json();
             const anlas = Math.floor((d?.trainingStepsLeft?.fixedTrainingStepsLeft ?? 0) + (d?.trainingStepsLeft?.purchasedTrainingSteps ?? 0));
