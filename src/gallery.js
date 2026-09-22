@@ -115,6 +115,7 @@ export function createViewer({ getContext, pipeline, onChanged = () => {} }) {
                 }
                 B.push(btn({ cls: `lb-redraw ${id === 'doc' || id === 'refined' ? 'primary' : ''}`, icon: 'image', label: t('vw_redraw_one'), title: t('vw_redraw_tip') }));
                 B.push(btn({ cls: 'lb-rewrite', icon: 'brain', label: t('vw_rewrite_one'), title: t('vw_rewrite_tip') }));
+            }
             B.push(btn({ cls: 'lb-copy icon', icon: 'clipboard', title: t('vw_copy') }));
             B.push(btn({ cls: 'lb-delete danger icon', icon: 'trash', title: t('vw_delete') }));
             if (!it.test) B.push(btn({ cls: 'lb-jump icon', icon: 'locate', title: t('vw_jump') }));
