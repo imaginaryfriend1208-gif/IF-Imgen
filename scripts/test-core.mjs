@@ -95,7 +95,11 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     // The document contract is appended to ANY preset (user-made / overridden too) and only when a document exists.
     const mine = createPreset({ name: 'mine', system: 'custom {{count}} {{dialect_rule}}' });
     const withDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', sceneDoc: doc });
-    assert.ok(withDoc.system.startsWith('custom 1') && withDoc.system.includes('SCENE DOCUMENT RULES') && withDoc.system.includes('WEARING lines with colours and state'));
+    assert.ok(withDoc.system.startsWith('custom 1') && withDoc.system.includes('SCENE DOCUMENT RULES') && withDoc.system.includes('CLOTHING IS NEVER OPTIONAL'));
+    // Ledger tokens the document uses but does not define are listed under CHAT TOKENS (step 2 sees the document with its tokens).
+    const withTok = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', sceneDoc: doc, tokens: '$yen.outfit_a: a red dress' });
+    assert.ok(withTok.user.includes('CHAT TOKENS') && withTok.user.includes('$yen.outfit_a: a red dress'));
+    assert.ok(!renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural', tokens: '$yen.outfit_a: a red dress' }).user.includes('CHAT TOKENS'), 'no document -> no token block');
     assert.ok(withDoc.system.includes('110-170 words') && !withDoc.system.includes('{{'), 'doc length rule follows the dialect, no leftover placeholder');
     assert.ok(withDoc.system.includes('EXAMPLE with a document (prose;'), 'doc example follows the dialect');
     // Krea / NAI presets force their dialect regardless of the global setting; length macros follow doc / no doc.
@@ -106,7 +110,7 @@ test('step 2 (translate): scene document is authoritative and replaces the raw c
     assert.ok(n.system.includes('TAG PROMPT') && n.system.includes('40-65 tags') && n.system.includes('NovelAI') && n.system.includes('CONTACT CHAIN') && !n.system.includes('PROSE PROMPT') && !n.system.includes('{{'));
     assert.equal(presetDialect(krea, 'tags'), 'natural'); assert.equal(presetDialect(BUILTIN_PRESETS[0], 'natural'), 'natural'); assert.equal(presetDialect(BUILTIN_PRESETS[0], 'bogus'), 'tags');
     assert.equal(createPreset({ name: 'fork', system: 'x', dialect: 'natural' }).dialect, 'natural'); assert.equal(createPreset({ name: 'plain', system: 'x' }).dialect, undefined);
-    assert.ok(withDoc.system.includes('WEARING lines with colours and state'), 'doc rules still ask for clothing in words');
+    assert.ok(withDoc.system.includes('CLOTHING IS NEVER OPTIONAL'), 'doc rules: clothing token in every shot');
     assert.ok(withDoc.user.includes('translate the SCENE DOCUMENT'));
     const noDoc = renderPlannerPrompt(mine, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'tags' });
     assert.ok(!noDoc.system.includes('SCENE DOCUMENT RULES') && !noDoc.system.includes('{{'));

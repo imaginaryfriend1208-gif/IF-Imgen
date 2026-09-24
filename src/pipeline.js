@@ -230,8 +230,15 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const g = settings.generate;
         const preset = findPreset(settings, presetId ?? g.presetId);
         const dialect = effectiveDialect(settings, preset.id);
+        // The document is handed over WITH its tokens (not expanded): the writer must copy "$kenjou.outfit_casual"
+        // into the prompt, and it can only do that when it sees the token. Meanings come from the ROSTER (stored
+        // entries), the document's own TOKENS section and, for tokens defined by earlier documents, the ledger lines below.
+        const doc = String(sceneDoc ?? '').trim();
+        const own = new Set(parseDocTokens(doc).map(tk => `${tk.key}.${tk.facet}`));
+        const refs = referencedIds([doc]);
+        const tokens = chatLedger(ctx, messageId, [doc]).filter(tk => refs.has(`${tk.key}.${tk.facet}`) && !own.has(`${tk.key}.${tk.facet}`));
         const { system, user } = renderPlannerPrompt(preset, {
-            paragraphs, count, dialect, sceneDoc: docWords(ctx, sceneDoc, messageId), fixed, context, autoAspect: g.autoAspect === true,
+            paragraphs, count, dialect, sceneDoc: doc, tokens: ledgerBlock(tokens), fixed, context, autoAspect: g.autoAspect === true,
             // Roster carries the texts of base look + Details + World so the writer knows what each token means.
             roster: rosterText(settings, chatIdentity(ctx), dialect),
         });
