@@ -8,6 +8,7 @@
 // Uses: (1) handed to step 1 as CHAT TOKENS so the planner reuses names instead of redefining, (2) merged into the ad-hoc
 // tokens of steps 2 / 3 so a token defined many replies ago still resolves, (3) the "Chat tokens" table / floater list.
 import { parseDocTokens } from './scene.js';
+import { normalizeKeyword } from './entities.js';
 
 export const LEDGER_KEY = 'ifimgen_tokens';
 export const WORLD_KEY = 'world';
@@ -46,9 +47,12 @@ function tokensOf(msg, docOf) {
  * later message (the planner may redefine a thing that changed).
  * @param {object} ctx - ST context (chat + metadata)
  * @param {(msg:object)=>string} docOf - scene document text of a message ('' when none)
- * @param {{ upTo?:number, limit?:number, includeHidden?:boolean }} [o]
+ * @param {{ upTo?:number, limit?:number, includeHidden?:boolean, keep?:Iterable<string> }} [o]
  *   upTo - only documents of messages <= upTo (a regenerate of an old message must not see the future)
  *   limit - newest N (0 / undefined = all); includeHidden - keep tokens the user removed from the list
+ *   keep - token ids ("key.facet", see referencedIds) that survive the limit: a token a document in play still refers
+ *          to must resolve even when it was defined many replies ago, otherwise the planner redefines it (a new text,
+ *          a new colour) and later images stop matching the earlier ones
  * @returns {LedgerToken[]}
  */
 export function ledgerTokens(ctx, docOf, o = {}) {
@@ -66,7 +70,25 @@ export function ledgerTokens(ctx, docOf, o = {}) {
     if (!o.includeHidden) list = list.filter(tk => !flags.hidden[tokenId(tk)]);
     for (const tk of list) tk.saved = flags.saved[tokenId(tk)] === tk.text;
     list.sort((a, b) => b.at - a.at);
-    return o.limit > 0 ? list.slice(0, o.limit) : list;
+    if (!(o.limit > 0)) return list;
+    const keep = new Set(o.keep ?? []);
+    if (!keep.size) return list.slice(0, o.limit);
+    const pinned = list.filter(tk => keep.has(tokenId(tk)));
+    const rest = list.filter(tk => !keep.has(tokenId(tk))).slice(0, o.limit);
+    return [...pinned, ...rest].sort((a, b) => b.at - a.at);
+}
+
+const REF_RE = /\$([\p{L}][\p{L}\p{N}_\-]*)\.([\p{L}\p{N}_\-]+)/gu;
+/** Ids ("key.facet") of every $key.facet token written in the given texts (scene documents, prompts). */
+export function referencedIds(texts) {
+    const out = new Set();
+    for (const t of Array.isArray(texts) ? texts : [texts]) {
+        for (const m of String(t ?? '').matchAll(REF_RE)) {
+            const key = normalizeKeyword(m[1]), facet = normalizeKeyword(m[2]);
+            if (key && facet) out.add(`${key}.${facet}`);
+        }
+    }
+    return out;
 }
 
 /** Number of tokens the user hid in this chat. */

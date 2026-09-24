@@ -9,7 +9,7 @@
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
 import { renderPlannerPrompt, parsePlan, isTruncatedReply, findPreset, effectiveDialect } from './presets.js';
 import { resolveEntities, rosterText, isBound } from './entities.js';
-import { ledgerTokens, ledgerBlock } from './ledger.js';
+import { ledgerTokens, ledgerBlock, referencedIds } from './ledger.js';
 import { sceneSystemText } from './settings.js';
 import { compilePrompt, effectiveParams } from './prompt.js';
 import { expandScene, expandSceneDoc, buildScenePrompt, buildRefinePrompt, parseRefined, parseDocTokens } from './scene.js';
@@ -137,8 +137,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     const saveMeta = ctx => { try { (ctx.saveMetadataDebounced ?? ctx.saveMetadata)?.(); } catch { /* not available (tests) */ } };
     /** Tokens of this chat handed to the LLM steps: the newest N (settings.generate.ledgerLimit, 0 = all); tokens defined
      *  by documents AFTER `beforeId` are left out so a regenerate of an old message does not see the future. */
-    function chatLedger(ctx, beforeId = Infinity) {
-        return ledgerTokens(ctx, sceneDocOf, { upTo: beforeId, limit: Number(settings.generate.ledgerLimit ?? 40) });
+    function chatLedger(ctx, beforeId = Infinity, texts = []) {
+        // Tokens referenced by the documents in play (previous docs handed to step 1, the current document, the
+        // prompts being compiled) are pinned: they survive the newest-N cut, so an outfit defined many replies ago
+        // still resolves instead of being dropped from the prompt or redefined with a different text.
+        const k = clamp(settings.generate.sceneHistory ?? 3, 0, 10);
+        const inPlay = [...previousSceneDocs(ctx, Math.min(beforeId, ctx.chat?.length ?? 0), k).map(x => x.text), ...texts];
+        return ledgerTokens(ctx, sceneDocOf, { upTo: beforeId, limit: Number(settings.generate.ledgerLimit ?? 40), keep: referencedIds(inPlay) });
     }
 
     /** Refusal / empty-output check shared by the LLM steps. */
@@ -203,11 +208,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
      * Scene document as the downstream LLMs read it: $keyword -> name, $keyword.detail -> stored text (current
      * entity data, so edited details reach old documents). The document on the message keeps its tokens.
      */
-    function docWords(ctx, doc) {
+    function docWords(ctx, doc, messageId = Infinity) {
         const text = String(doc ?? '');
         if (!text.includes('$')) return text;
         const ents = resolveEntities(settings, { text, ...chatIdentity(ctx) });
-        const ex = expandSceneDoc({ doc: text, characters: ents.characters, personas: ents.personas, adhoc: chatLedger(ctx) });
+        // Ledger up to THIS message only: a regenerate of an old reply must resolve its tokens with the definitions
+        // that were current then, not with a later redefinition (same rule as step 1).
+        const ex = expandSceneDoc({ doc: text, characters: ents.characters, personas: ents.personas, adhoc: chatLedger(ctx, messageId, [text]) });
         if (ex.unknown.length) log('scene document: unresolved tokens kept as written:', ex.unknown);
         return ex.text;
     }
@@ -218,12 +225,12 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
      * `fixed` = write one prompt for every listed paragraph (regenerate keeps every image slot).
      * @returns {Promise<{p:number, prompt:string, final?:string, ar?:string}[]>}
      */
-    async function planShots(ctx, { paragraphs, count, sceneDoc, presetId, fixed = false, context = '' }, signal) {
+    async function planShots(ctx, { paragraphs, count, sceneDoc, presetId, fixed = false, context = '', messageId = Infinity }, signal) {
         const g = settings.generate;
         const preset = findPreset(settings, presetId ?? g.presetId);
         const dialect = effectiveDialect(settings, preset.id);
         const { system, user } = renderPlannerPrompt(preset, {
-            paragraphs, count, dialect, sceneDoc: docWords(ctx, sceneDoc), fixed, context, autoAspect: g.autoAspect === true,
+            paragraphs, count, dialect, sceneDoc: docWords(ctx, sceneDoc, messageId), fixed, context, autoAspect: g.autoAspect === true,
             // Roster carries the texts of base look + Details + World so the writer can produce the smooth "final".
             roster: rosterText(settings, chatIdentity(ctx), dialect),
         });
@@ -244,20 +251,20 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
      * (its TOKENS section) resolve in the raw prompts after Details / World.
      * @returns {Promise<{ prompt:string, negative:string, ents:object, expanded:string, final:string, refined:string, unknown:string[] }[]>}
      */
-    async function compileScenes(ctx, scenes, backendId, signal, { setting = '', finals = [], noRefine = false } = {}) {
+    async function compileScenes(ctx, scenes, backendId, signal, { setting = '', finals = [], noRefine = false, messageId = Infinity } = {}) {
         const g = settings.generate;
         const ident = chatIdentity(ctx);
         // Entities are resolved on the union of all scenes so every image carries the same cast.
         const ents = resolveEntities(settings, { text: scenes.join('\n'), ...ident });
         // Ad-hoc tokens: this document's TOKENS first, then the chat ledger (tokens defined by earlier documents).
-        const adhoc = [...parseDocTokens(setting), ...chatLedger(ctx)];
+        const adhoc = [...parseDocTokens(setting), ...chatLedger(ctx, messageId, [setting, ...scenes])];
         const shots = scenes.map(scene => expandScene({ scene, characters: ents.characters, personas: ents.personas, adhoc }));
         for (const ex of shots) if (ex.unknown.length) log('unresolved tokens dropped:', ex.unknown);
         const dialect = effectiveDialect(settings);
         const final = scenes.map((_, i) => String(finals[i] ?? '').trim());
         let refined = scenes.map(() => '');
         if (g.mode === 'refine' && !noRefine) {
-            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect, setting: docWords(ctx, setting), shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
+            const msgs = buildRefinePrompt({ system: g.refineSystem, dialect, setting: docWords(ctx, setting, messageId), shots: shots.map(ex => ({ expanded: ex.text, used: ex.used })), characters: ents.characters, personas: ents.personas, style: ents.style });
             refined = parseRefined(await llm.chat({ ...msgs, signal }), scenes.length);
             if (refined.every(r => !r)) throw new Error('Refine LLM returned no usable prompts.');
             refined.forEach((r, i) => { if (!r) log(`refine: shot ${i + 1} missing in reply, falling back to the expanded draft`); });
@@ -344,10 +351,10 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     const logCompiled = (c, label = '') => log(`compiled${label} [chars: ${c.ents.characters.map(e => e.name).join(',') || '-'} | personas: ${c.ents.personas.map(e => e.name).join(',') || '-'} | style: ${c.ents.style?.name ?? '-'}]`, c.prompt);
 
     /** Compile + render ONE prompt (single regenerate). `setting` = scene document of the message. */
-    async function render(ctx, { scene, p, setting = '', final = '', noRefine = false }, signal, status) {
+    async function render(ctx, { scene, p, setting = '', final = '', noRefine = false, messageId = Infinity }, signal, status) {
         const backend = backends.active();
         if (settings.generate.mode === 'refine' && !noRefine) status('refining prompt…');
-        const c = await compileScene(ctx, scene, backend.id, signal, { setting, finals: [final], noRefine });
+        const c = await compileScene(ctx, scene, backend.id, signal, { setting, finals: [final], noRefine, messageId });
         logCompiled(c);
         return renderCompiled(ctx, { scene, p, setting }, c, signal, status);
     }
@@ -399,16 +406,20 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
                 status('writing scene document…');
                 setting = await writeSceneDoc(ctx, messageId, { paragraphs, context }, controller.signal);
                 log(`#${messageId} scene document (${fmtMs(tm.lap('scene'))}, ${setting.length} chars)`, setting);
+                // Stored right away (not after the renders): if a later step fails or is cancelled, the next reply's
+                // planner and the chat ledger still see this document and its TOKENS, so names are not defined twice.
+                setSceneDoc(msg, setting);
+                await ctx.saveChat();
             }
 
             // Step 2: translate the document into N prompts (the translator also picks the paragraphs).
             status('writing prompts…');
-            const plan = await planShots(ctx, { paragraphs, count, sceneDoc: setting, presetId: opt.presetId, context }, controller.signal);
+            const plan = await planShots(ctx, { paragraphs, count, sceneDoc: setting, presetId: opt.presetId, context, messageId }, controller.signal);
             log(`plan (${fmtMs(tm.lap('prompts'))})`, plan);
 
             // Step 3 (mode 'refine'): ONE batch refine call for ALL images of this reply.
             if (g.mode === 'refine') status(`refining ${plan.length} prompt${plan.length > 1 ? 's' : ''} in one call…`);
-            const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting, finals: plan.map(x => x.final ?? '') });
+            const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting, finals: plan.map(x => x.final ?? ''), messageId });
             if (g.mode === 'refine') tm.lap('refine');
             compiled.forEach((c, i) => logCompiled(c, ` #${i + 1}`));
 
@@ -421,7 +432,6 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
             // Stale check: the message may have been swiped/edited while generating.
             if (ctx.chat[messageId]?.mes !== originalText) return { skipped: 'message changed during generation', generated: made.length };
-            if (!stored) setSceneDoc(msg, setting);
             if (replacing) records(msg).length = 0;
             records(msg).push(...made);
             setMessageText(ctx, messageId, insertAfterParagraphs(baseText, paragraphs, made.map(r => ({ p: r.p, snippet: imageSnippet(r.url) }))));
@@ -470,14 +480,14 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if (editedFinal) { useScene = String(rec?.scene ?? '').trim() || editedFinal; useFinal = editedFinal; }
             if (!useScene && !keepPrompt && para && setting) {
                 status('writing prompt…');
-                try { const hit = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true }, controller.signal))[0]; useScene = hit?.prompt ?? ''; useFinal = hit?.final ?? ''; }
+                try { const hit = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true, messageId }, controller.signal))[0]; useScene = hit?.prompt ?? ''; useFinal = hit?.final ?? ''; }
                 catch (e) { if (e?.name === 'AbortError') throw e; log('regen: translation failed, reusing the stored prompt', e.message); }
                 tm.lap('prompt');
             }
             if (!useScene) { useScene = String(rec?.scene ?? '').trim() || String(rec?.prompt ?? '').trim(); useFinal = String(rec?.final ?? '').trim(); }
             if (!useScene) throw new Error('No stored prompt for this image — edit the draft and redraw.');
             // A user-typed final prompt is sent as written: the refine step must not rewrite it.
-            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal, noRefine: noRefine || Boolean(editedFinal) }, controller.signal, status);
+            const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal, noRefine: noRefine || Boolean(editedFinal), messageId }, controller.signal, status);
             tm.lap(settings.generate.mode === 'refine' ? 'refine+image' : 'image');
             if (rec) fresh.history = [stripHistory(rec), ...(rec.history ?? [])].slice(0, MAX_VERSIONS);
             const list = records(msg);
@@ -532,14 +542,14 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if (slots.length && setting) {
                 status(`writing ${slots.length} prompt${slots.length > 1 ? 's' : ''}…`);
                 try {
-                    const plan = await planShots(ctx, { paragraphs: slots.map(x => x.para), count: slots.length, sceneDoc: setting, fixed: true }, controller.signal);
+                    const plan = await planShots(ctx, { paragraphs: slots.map(x => x.para), count: slots.length, sceneDoc: setting, fixed: true, messageId }, controller.signal);
                     for (const x of slots) { const hit = plan.find(y => y.p === x.para.index); if (hit) { prompts[x.i] = hit.prompt; finals[x.i] = hit.final ?? ''; } }
                 } catch (e) { if (e?.name === 'AbortError') throw e; log('regen-all: translation failed, reusing the stored prompts', e.message); }
                 tm.lap('prompts');
             }
             if (prompts.some(p => !p)) throw new Error('No prompt for one of the images — use "Edit & regenerate" on it.');
             if (settings.generate.mode === 'refine') status(`refining ${todo.length} prompt${todo.length > 1 ? 's' : ''} in one call…`);
-            const compiled = await compileScenes(ctx, prompts, backends.active().id, controller.signal, { setting, finals });
+            const compiled = await compileScenes(ctx, prompts, backends.active().id, controller.signal, { setting, finals, messageId });
             if (settings.generate.mode === 'refine') tm.lap('refine');
             for (let i = 0; i < todo.length; i++) {
                 const rec = { ...todo[i], scene: prompts[i] };

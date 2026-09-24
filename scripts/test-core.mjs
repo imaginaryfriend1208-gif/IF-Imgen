@@ -15,6 +15,7 @@ import { rosterText, isBound, isActive, activeProfileFor, bindReason } from '../
 import { parseWorkflow, workflowInfo, renderWorkflow, autoMapWorkflow, extractLoras, injectLoras, PLACEHOLDERS } from '../src/comfy.js';
 import { buildProfilePrompt, parseProfilePrompt, profileDraft, profileFacets, PROFILE_SHOTS, DEFAULT_PROFILE_SYSTEM } from '../src/profile.js';
 import { normalizeProfile, PROFILE_VERSIONS } from '../src/entities.js';
+import { ledgerTokens, referencedIds } from '../src/ledger.js';
 
 let passed = 0;
 const test = (name, fn) => { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); process.exitCode = 1; } };
@@ -870,4 +871,32 @@ test('presets: Save overwrites in place (built-in -> override, user -> own recor
     const mine = createPreset({ name: 'Mine', system: 'a' }); st.data.presets.push(mine);
     assert.ok(overwritePreset(st, mine.id, 'b')); assert.equal(mine.system, 'b');
     assert.equal(overwritePreset(st, 'nope', 'x'), false);
+});
+
+test('ledger: upTo hides later redefinitions; limit keeps newest N but pins tokens still referenced (keep)', () => {
+    const doc = tokens => `TOKENS:
+${tokens}
+SCENE:
+[1] x`;
+    const chat = [
+        { is_user: false, extra: { ifimgen_scene: { text: doc('$yen.outfit_a: a red silk dress') } } },
+        { is_user: false, extra: { ifimgen_scene: { text: doc('$yen.outfit_b: a blue coat\n$world.npc_ayumi: a short woman') } } },
+        { is_user: false, extra: { ifimgen_scene: { text: doc('$yen.outfit_c: a green yukata') } } },
+        { is_user: false, extra: { ifimgen_scene: { text: doc('$yen.outfit_a: a red dress, now torn') } } },
+    ];
+    const ctx = { chat, chatMetadata: {} };
+    const docOf = m => m?.extra?.ifimgen_scene?.text ?? '';
+    // upTo: message 2 does not see the redefinition made by message 3.
+    const early = ledgerTokens(ctx, docOf, { upTo: 2 });
+    assert.equal(early.find(t => t.facet === 'outfit_a').text, 'a red silk dress');
+    assert.equal(ledgerTokens(ctx, docOf, {}).find(t => t.facet === 'outfit_a').text, 'a red dress, now torn');
+    // limit 2 without keep: only the two newest (outfit_a redefined at 3, outfit_c at 2) -> outfit_b and the NPC are cut.
+    const cut = ledgerTokens(ctx, docOf, { limit: 2 });
+    assert.deepEqual(cut.map(t => t.facet).sort(), ['outfit_a', 'outfit_c']);
+    // keep pins what a document in play still refers to, on top of the newest N.
+    const ids = referencedIds(['$yen wearing $Yen.outfit_b, collar open; $world.npc_ayumi stands by the door']);
+    assert.deepEqual([...ids].sort(), ['world.npc_ayumi', 'yen.outfit_b']);
+    const kept = ledgerTokens(ctx, docOf, { limit: 2, keep: ids });
+    assert.deepEqual(kept.map(t => `${t.key}.${t.facet}`).sort(), ['world.npc_ayumi', 'yen.outfit_a', 'yen.outfit_b', 'yen.outfit_c']);
+    assert.ok(kept.every((t, i) => i === 0 || kept[i - 1].at >= t.at), 'newest first');
 });
