@@ -70,7 +70,7 @@ test('parsePlan: tolerant JSON, drops invalid/duplicate paragraphs, sorted', () 
     assert.deepEqual(plan, [{ p: 1, prompt: 'a' }, { p: 2, prompt: 'b' }]);
     assert.deepEqual(parsePlan('garbage', [1]), []);
     // reply cut off by max tokens: complete objects kept, the cut one salvaged (prompt only), too-short cut dropped
-    assert.deepEqual(parsePlan('[{"p":1,"prompt":"a full prompt","final":"f"},{"p":2,"prompt":"a second prompt long enough to keep","final":"cut mid wa', [1, 2]), [{ p: 1, prompt: 'a full prompt', final: 'f' }, { p: 2, prompt: 'a second prompt long enough to keep' }]);
+    assert.deepEqual(parsePlan('[{"p":1,"prompt":"a full prompt","final":"f"},{"p":2,"prompt":"a second prompt long enough to keep","final":"cut mid wa', [1, 2]), [{ p: 1, prompt: 'a full prompt' }, { p: 2, prompt: 'a second prompt long enough to keep' }]);
     assert.deepEqual(parsePlan('[{"p":1,"prompt":"short', [1]), []);
 });
 
@@ -161,7 +161,7 @@ test('resolveEntities: no keyword -> official entities; keyword -> only the name
 test('planner prompt tells the LLM to describe the scene, not the character sheet', () => {
     const { system } = renderPlannerPrompt(BUILTIN_PRESETS[0], { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '$a — character: A', context: '', dialect: 'natural' });
     assert.ok(/NOT a character sheet/i.test(system));
-    assert.ok(/Do NOT repeat a person's base look/i.test(system));
+    assert.ok(/Do NOT write a person's base look/i.test(system));
     assert.ok(system.includes('EXAMPLE'));
 });
 
@@ -840,7 +840,7 @@ test('NSFW preset: priority ladder, focus over wide, explicit anatomy, motion in
     for (const k of ['ONE INSTANT, FEW PEOPLE', 'POV LADDER', 'FRAME SCOPE', 'covered nipples', 'BODY PHYSICS BY POSE', 'hanging breasts', 'CONTACT POINTS', 'LIGHT WITH A DIRECTION', 'WEIGHTS (tags dialect only', 'TAG ORDER (tags dialect)', 'CHECK BEFORE ANSWERING', '45-70']) assert.ok(tg.includes(k), k);
     assert.ok(!renderPlannerPrompt(p, { paragraphs: [{ index: 1, text: 'x' }], count: 1, roster: '', dialect: 'natural' }).system.includes('45-70'), 'tag density applies to the tags dialect only');
     assert.ok(tg.includes('EXAMPLES (tags') && !tg.includes('EXAMPLE (roster'), 'NSFW example replaces the default one');
-    assert.ok(tg.includes('"final"') && tg.includes('TWO VERSIONS'), 'same raw prompt + final contract');
+    assert.ok(!tg.includes('"final"') && tg.includes('ONE VERSION'), 'single prompt with tokens, no LLM-written final');
     assert.ok(!/\{\{/.test(tg), 'no leftover placeholder');
     const ex = tg.slice(tg.indexOf('EXAMPLES (tags'));
     assert.ok(ex.includes('nipple focus') && ex.includes('doggystyle') && ex.includes('face focus'), 'three shots: contact close-up, wide position, face');

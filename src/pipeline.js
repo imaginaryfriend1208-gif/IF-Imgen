@@ -1,9 +1,10 @@
 // IF Imgen - per-message pipeline:
 //   step 1  scene planner  : paragraphs + context + previous scene documents -> ONE scene document (message.extra.ifimgen_scene)
-//   step 2  translator     : scene document + paragraphs -> N image prompts, each in two versions: raw "prompt" with
-//                            $tokens and smooth "final" (tokens written out, only the traits the shot shows) (JSON)
+//   step 2  translator     : scene document + paragraphs -> N image prompts written with $tokens (JSON)
 //   step 3  refine (opt.)  : ONE batch call polishing the N prompts against the document (mode 'refine')
-//   compile: refined > final > expanded raw prompt; with final / refined the compiler adds LoRA + style + negative only.
+//   compile: the $tokens are replaced by the STORED texts word for word (expandScene) - the LLM never writes them out,
+//            so the same token reads the same in every image of the chat. refined > user-typed final > expanded prompt;
+//            with a refined / user final the compiler adds LoRA + style + negative only.
 //   render each prompt -> insert in place. Each image is recorded in message.extra.ifimgen so it can be regenerated later.
 // Regenerate (one image / all images) re-runs step 2 (+3) from the STORED document; "regen scene" / Generate re-run step 1.
 import { splitParagraphs, insertAfterParagraphs, imageSnippet, stripImages, stripImagesLoose, stripForeignImages, countImages, replaceImageUrl, removeImageByUrl, migrateLegacyImages, safeImageUrl } from './paragraphs.js';
@@ -220,10 +221,10 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
     }
 
     /**
-     * Step 2: translate the scene document (+ the numbered paragraphs) into image prompts - raw `prompt` with $tokens
-     * and smooth `final` (absent when the LLM left it out or it still carried a $ token).
+     * Step 2: translate the scene document (+ the numbered paragraphs) into image prompts written with $tokens
+     * (expanded by the compiler; any "final" the LLM adds is ignored by parsePlan).
      * `fixed` = write one prompt for every listed paragraph (regenerate keeps every image slot).
-     * @returns {Promise<{p:number, prompt:string, final?:string, ar?:string}[]>}
+     * @returns {Promise<{p:number, prompt:string, ar?:string}[]>}
      */
     async function planShots(ctx, { paragraphs, count, sceneDoc, presetId, fixed = false, context = '', messageId = Infinity }, signal) {
         const g = settings.generate;
@@ -231,7 +232,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
         const dialect = effectiveDialect(settings, preset.id);
         const { system, user } = renderPlannerPrompt(preset, {
             paragraphs, count, dialect, sceneDoc: docWords(ctx, sceneDoc, messageId), fixed, context, autoAspect: g.autoAspect === true,
-            // Roster carries the texts of base look + Details + World so the writer can produce the smooth "final".
+            // Roster carries the texts of base look + Details + World so the writer knows what each token means.
             roster: rosterText(settings, chatIdentity(ctx), dialect),
         });
         const reply = await llm.chat({ system, user, signal });
@@ -243,12 +244,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
     /**
      * Compile N translated prompts of ONE message -> N final prompts.
-     * mode 'plan'   : the step-2 `final` (smooth, no tokens) when present, else the raw prompt with tokens expanded
-     *                 verbatim and the cast's base look prepended by the compiler. No LLM.
+     * mode 'plan'   : the prompt with its tokens expanded verbatim (stored texts, word for word) and the cast's base
+     *                 look prepended by the compiler. No LLM.
      * mode 'refine' : ONE batch LLM call for all prompts (document + cast + N drafts -> N prompts), never one call per image,
      *                 so location / people / clothing stay identical across the images of a reply.
-     * `finals[i]` = the smooth version of scenes[i] from step 2 ('' when none). Ad-hoc tokens of the scene document
-     * (its TOKENS section) resolve in the raw prompts after Details / World.
+     * `finals[i]` = a finished prompt typed by the USER for scenes[i] ('' when none) - sent as written instead of the
+     * expanded prompt. Step 2 no longer produces one (the LLM used to rewrite the stored texts and drifted between
+     * images). Ad-hoc tokens of the scene document (its TOKENS section) resolve in the prompts after Details / World.
      * @returns {Promise<{ prompt:string, negative:string, ents:object, expanded:string, final:string, refined:string, unknown:string[] }[]>}
      */
     async function compileScenes(ctx, scenes, backendId, signal, { setting = '', finals = [], noRefine = false, messageId = Infinity } = {}) {
@@ -270,8 +272,8 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             refined.forEach((r, i) => { if (!r) log(`refine: shot ${i + 1} missing in reply, falling back to the expanded draft`); });
         }
         return shots.map((ex, i) => {
-            // refined (step 3) > final (step 2, smooth) > expanded raw prompt. The first two already carry the looks
-            // the shot needs -> merged: the compiler adds LoRA + style + negative only, no duplicate base look.
+            // refined (step 3) > user-typed final > expanded prompt. The first two already carry the looks the shot
+            // needs -> merged: the compiler adds LoRA + style + negative only, no duplicate base look.
             const text = refined[i] || final[i] || ex.text;
             const { prompt, negative } = compilePrompt({ scene: text, ...ents, settings, backend: backendId, merged: Boolean(refined[i] || final[i]), dialect });
             return { prompt, negative, ents, expanded: ex.text, final: final[i], refined: refined[i], unknown: ex.unknown };
@@ -419,7 +421,7 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
 
             // Step 3 (mode 'refine'): ONE batch refine call for ALL images of this reply.
             if (g.mode === 'refine') status(`refining ${plan.length} prompt${plan.length > 1 ? 's' : ''} in one call…`);
-            const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting, finals: plan.map(x => x.final ?? ''), messageId });
+            const compiled = await compileScenes(ctx, plan.map(x => x.prompt), backends.active().id, controller.signal, { setting, messageId });
             if (g.mode === 'refine') tm.lap('refine');
             compiled.forEach((c, i) => logCompiled(c, ` #${i + 1}`));
 
@@ -473,18 +475,18 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             const had = Boolean(sceneDocOf(msg));
             const setting = await sceneDocFor(ctx, messageId, { paragraphs, signal: controller.signal, status });
             if (!had && setting) tm.lap('scene');
-            // An edited draft is drawn as typed (no smooth version); otherwise step 2 runs again and its `final` is used,
-            // falling back to the stored raw prompt + stored final when the translation fails.
-            // keepPrompt ("Redraw"): no LLM call - the stored draft + final are rendered again as they are.
+            // An edited draft is drawn as typed; otherwise step 2 runs again (new prompt with tokens, expanded by the
+            // compiler), falling back to the stored prompt when the translation fails.
+            // keepPrompt ("Redraw"): no LLM call - the stored draft (+ a user-typed final, if any) is rendered again as it is.
             let useScene = edited, useFinal = '';
             if (editedFinal) { useScene = String(rec?.scene ?? '').trim() || editedFinal; useFinal = editedFinal; }
             if (!useScene && !keepPrompt && para && setting) {
                 status('writing prompt…');
-                try { const hit = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true, messageId }, controller.signal))[0]; useScene = hit?.prompt ?? ''; useFinal = hit?.final ?? ''; }
+                try { const hit = (await planShots(ctx, { paragraphs: [para], count: 1, sceneDoc: setting, fixed: true, messageId }, controller.signal))[0]; useScene = hit?.prompt ?? ''; }
                 catch (e) { if (e?.name === 'AbortError') throw e; log('regen: translation failed, reusing the stored prompt', e.message); }
                 tm.lap('prompt');
             }
-            if (!useScene) { useScene = String(rec?.scene ?? '').trim() || String(rec?.prompt ?? '').trim(); useFinal = String(rec?.final ?? '').trim(); }
+            if (!useScene) { useScene = String(rec?.scene ?? '').trim() || String(rec?.prompt ?? '').trim(); useFinal = keepPrompt ? String(rec?.final ?? '').trim() : ''; }
             if (!useScene) throw new Error('No stored prompt for this image — edit the draft and redraw.');
             // A user-typed final prompt is sent as written: the refine step must not rewrite it.
             const fresh = await render(ctx, { scene: useScene, p: rec?.p ?? 0, setting, final: useFinal, noRefine: noRefine || Boolean(editedFinal), messageId }, controller.signal, status);
@@ -537,13 +539,13 @@ export function createPipeline({ settings, getContext, backends, llm, saveImage,
             if ((newScene || !had) && setting) tm.lap('scene');
             // Step 2 for every slot that still has its paragraph; slots without one keep their stored prompt.
             const prompts = todo.map(r => String(r.scene ?? '').trim());
-            const finals = todo.map(r => String(r.final ?? '').trim());
+            const finals = todo.map(r => String(r.final ?? '').trim());   // kept only for slots that are NOT translated again
             const slots = todo.map((r, i) => ({ i, para: paraOf(r) })).filter(x => x.para);
             if (slots.length && setting) {
                 status(`writing ${slots.length} prompt${slots.length > 1 ? 's' : ''}…`);
                 try {
                     const plan = await planShots(ctx, { paragraphs: slots.map(x => x.para), count: slots.length, sceneDoc: setting, fixed: true, messageId }, controller.signal);
-                    for (const x of slots) { const hit = plan.find(y => y.p === x.para.index); if (hit) { prompts[x.i] = hit.prompt; finals[x.i] = hit.final ?? ''; } }
+                    for (const x of slots) { const hit = plan.find(y => y.p === x.para.index); if (hit) { prompts[x.i] = hit.prompt; finals[x.i] = ''; } }
                 } catch (e) { if (e?.name === 'AbortError') throw e; log('regen-all: translation failed, reusing the stored prompts', e.message); }
                 tm.lap('prompts');
             }
